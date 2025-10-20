@@ -1,54 +1,50 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\LandController;
-use App\Http\Controllers\ShareController;
-use App\Http\Controllers\TransactionController;
+use App\Http\Controllers\PurchaseController;
+use App\Http\Controllers\DepositController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\WithdrawalController;
 
-/*
-|--------------------------------------------------------------------------
-| API Routes
-|--------------------------------------------------------------------------
-|
-| These routes are for your API. They are stateless and don't require CSRF
-| protection. By default, they are assigned the "api" middleware group.
-|
-*/
+// Public routes
+Route::prefix('auth')->group(function () {
+    Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/email/verify/code', [AuthController::class, 'verifyEmailCode']);
+    Route::post('/email/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 
-// Test route to check if the API is working
-Route::get('/test', function () {
-    return 'API is working';
+    Route::prefix('password')->group(function () {
+        Route::post('/reset/code', [AuthController::class, 'sendPasswordResetCode']);
+        Route::post('/reset/verify', [AuthController::class, 'verifyResetCode']);
+        Route::post('/reset', [AuthController::class, 'resetPassword']);
+    });
 });
 
-// Route to get all lands
-Route::get('/lands', [LandController::class, 'index']);
+// Deposit callback
+Route::get('/deposit/callback', [DepositController::class, 'handleDepositCallback'])->name('deposit.callback');
 
-// Route to get details of a single land by its ID
-Route::get('/lands/{id}', [LandController::class, 'show']);
+// Protected routes
+Route::middleware('jwt.auth')->group(function () {
+    Route::middleware('verified')->group(function () {
+        // User actions
+        Route::post('/logout', [AuthController::class, 'logout']);
 
-// Route to create a new land
-Route::post('/lands', [LandController::class, 'store']);
+        // Land routes
+        Route::prefix('lands')->group(function () {
+            Route::get('/', [LandController::class, 'index']);
+            Route::get('/{id}', [LandController::class, 'show'])->where('id', '[0-9]+');
+            Route::post('/', [LandController::class, 'store']);
+            Route::post('/{id}/purchase', [PurchaseController::class, 'purchase'])->where('id', '[0-9]+');
+            Route::post('/{id}/sell', [PurchaseController::class, 'sellUnits'])->where('id', '[0-9]+');
+            Route::get('/{id}/units', [UserController::class, 'getUserUnitsForLand'])->where('id', '[0-9]+');
+        });
 
-// Route to purchase shares of a land by its ID
-Route::post('/lands/{id}/buy', [LandController::class, 'buy']);
+        Route::get('/user/lands', [UserController::class, 'getAllUserLands']);
 
-// Route to get all shares for a specific land
-Route::get('/lands/{id}/shares', [ShareController::class, 'index']);
-
-// Route to get a specific share by its ID (optional)
-Route::get('/shares/{id}', [ShareController::class, 'show']);
-
-// Route to get all transactions
-Route::get('/transactions', [TransactionController::class, 'index']);
-
-// Route to get all transactions for a specific user (optional)
-Route::get('/users/{user_id}/transactions', [TransactionController::class, 'getByUser']);
-
-// Route to get all transactions for a specific land (optional)
-Route::get('/lands/{land_id}/transactions', [TransactionController::class, 'getByLand']);
-
-Route::middleware('auth:sanctum')->get('/user',
-function(Request $request){
-    return $request->user();
-} 
-);
+        // Deposit and withdrawal
+        Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
+        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal']);
+    });
+});

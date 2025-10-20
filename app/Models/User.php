@@ -18,8 +18,10 @@ class User extends Authenticatable implements JWTSubject
         'email',
         'password',
         'balance',
-        'bank_account_number',
+        'account_number',
         'bank_code',
+        'account_name',
+        'bank_name',
         'uid',
         'verification_code',
         'verification_code_expiry',
@@ -39,6 +41,7 @@ class User extends Authenticatable implements JWTSubject
         'password' => 'hashed',
         'verification_code_expiry' => 'datetime',
         'password_reset_code_expires_at' => 'datetime',
+        'balance' => 'decimal:2',
     ];
 
     protected static function booted()

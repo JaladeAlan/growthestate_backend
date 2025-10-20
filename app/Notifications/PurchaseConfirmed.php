@@ -22,7 +22,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
     // Delivery channels
     public function via($notifiable)
     {
-        return ['database']; // You can also use ['mail'] or others
+        return ['mail', 'database', 'broadcast'];
     }
 
     // Database representation
@@ -46,4 +46,15 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
                     ->action('View Purchase', url('/purchases/' . $this->purchase->id))
                     ->line('Thank you for your purchase!');
     }
+
+    public function toArray($notifiable)
+    {
+        return $this->toDatabase($notifiable);
+    }
+    // public function toBroadcast($notifiable)
+    // {
+    //     return new BroadcastMessage([
+    //         'message' => 'Your purchase of ' . $this->purchase->units . ' units has been confirmed!'
+    //     ]);
+    // }
 }

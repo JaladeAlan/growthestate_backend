@@ -55,9 +55,37 @@ Route::middleware('jwt.auth')->group(function () {
         //     Route::get('/users/{user_id}', [TransactionController::class, 'getByUser']); // Get transactions by user ID
         //     Route::get('/lands/{land_id}', [TransactionController::class, 'getByLand']); // Get transactions by land ID
         // });
+        
+        // Transaction PIN
+        Route::post('/pin/set', [UserController::class, 'setTransactionPin']);
+        Route::post('/pin/update', [UserController::class, 'updateTransactionPin']);
+       
+        // Deposits & Withdrawals
+        Route::post('/deposit', [DepositController::class, 'initiateDeposit']);
+        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal']);
+        Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
+        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
+        Route::get('/withdrawal/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
-        // Deposit and withdrawal routes
-        Route::post('/deposit', [DepositController::class, 'initiateDeposit']); // Deposit funds
-        Route::post('/withdraw', [WithdrawalController::class, 'initiateWithdrawal']); // Withdraw funds
-    });
+         // Bank details
+        Route::put('/user/bank-details', [UserController::class, 'updateBankDetails']);
+
+        // Withdrawals
+        Route::post('/withdrawal/request', [WithdrawalController::class, 'requestWithdrawal']);
+        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
+
+        //User notifications
+        Route::get('/notifications', [NotificationController::class, 'getNotifications']);
+        Route::get('/notifications/unread', [NotificationController::class, 'getUnreadNotifications']);
+        Route::post('/notifications/read', [NotificationController::class, 'markAllAsRead']);
+
+        // Balance
+        Route::get('/user/balance', function () {
+            $user = auth()->user();
+            return response()->json(['balance' => $user->balance]);
+        });
+        });
+    
+// Paystack Webhook (Public - No Authentication)
+Route::post('/paystack/webhook', [WithdrawalController::class, 'handlePaystackCallback']);
 });
