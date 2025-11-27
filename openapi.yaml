@@ -1,0 +1,295 @@
+openapi: 3.1.0
+info:
+  title: Growth Estate API
+  version: 1.0.0
+  description: >
+    API for authentication, bank verification, withdrawals, notifications, and email verification.
+    Authentication uses JWT Bearer tokens.
+
+servers:
+  - url: https://growth-estate.onrender.com/api
+    description: Production server
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+          nullable: true
+
+    WithdrawalResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        reference:
+          type: string
+        status:
+          type: string
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        data:
+          type: object
+        read_at:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+
+paths:
+
+  ##############################################
+  # USER BANK DETAILS
+  ##############################################
+
+  /user/bank:
+    post:
+      summary: Update user bank details
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account_number:
+                  type: string
+                bank_code:
+                  type: string
+                bank_name:
+                  type: string
+      responses:
+        200:
+          description: Bank details updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        400:
+          description: Validation or missing bank details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        500:
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  ##############################################
+  # WITHDRAWALS
+  ##############################################
+
+  /withdraw:
+    post:
+      summary: Request a withdrawal
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+      responses:
+        200:
+          description: Withdrawal initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawalResponse'
+
+        400:
+          description: Insufficient balance or missing bank info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        500:
+          description: Failed to initiate withdrawal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /withdraw/{reference}/status:
+    get:
+      summary: Check withdrawal status
+      parameters:
+        - in: path
+          name: reference
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Withdrawal status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  amount:
+                    type: number
+                  requested_at:
+                    type: string
+                  completed_at:
+                    type: string
+        404:
+          description: Withdrawal not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /withdraw/retry:
+    post:
+      summary: Retry pending withdrawals (Admin/Internal)
+      responses:
+        200:
+          description: Pending withdrawals retried
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+
+  ##############################################
+  # PAYSTACK CALLBACK
+  ##############################################
+
+  /paystack/withdraw/callback:
+    post:
+      summary: Paystack webhook callback for withdrawals
+      responses:
+        200:
+          description: Callback handled
+        403:
+          description: Invalid signature
+
+
+  ##############################################
+  # NOTIFICATIONS
+  ##############################################
+
+  /notifications:
+    get:
+      summary: Get all notifications
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+
+  /notifications/unread:
+    get:
+      summary: Get unread notifications
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: List of unread notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+
+  /notifications/mark-read:
+    post:
+      summary: Mark all notifications as read
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Success message
+
+
+  ##############################################
+  # EMAIL VERIFICATION
+  ##############################################
+
+  /email/verify/{id}/{hash}:
+    get:
+      summary: Verify a user's email
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        302:
+          description: Redirect after verification
+
+  /email/resend:
+    post:
+      summary: Resend email verification notification
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Verification link resent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
