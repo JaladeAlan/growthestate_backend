@@ -7,17 +7,21 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        Schema::table('deposits', function (Blueprint $table) {
-            $table->string('gateway')
-                  ->nullable()
-                  ->after('amount_kobo'); 
-        });
+        if (!Schema::hasColumn('deposits', 'gateway')) {
+            Schema::table('deposits', function (Blueprint $table) {
+                $table->string('gateway')
+                      ->nullable()
+                      ->after('amount_kobo');
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::table('deposits', function (Blueprint $table) {
-            $table->dropColumn('gateway');
-        });
+        if (Schema::hasColumn('deposits', 'gateway')) {
+            Schema::table('deposits', function (Blueprint $table) {
+                $table->dropColumn('gateway');
+            });
+        }
     }
 };
