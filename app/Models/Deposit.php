@@ -1,6 +1,5 @@
 <?php
 
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,46 +9,96 @@ class Deposit extends Model
 {
     use HasFactory;
 
-    // Define the table name if it’s different from the plural of the model name
+    const STATUS_PENDING   = 'pending';
+    const STATUS_COMPLETED = 'completed';
+    const STATUS_FAILED    = 'failed';
+
+    // ── Table / fillable ──────────────────────────────────────────────────────
+
     protected $table = 'deposits';
 
-    // Mass assignable attributes
     protected $fillable = [
         'user_id',
         'reference',
-        'amount',
+        'amount_kobo',
+        'transaction_fee',
+        'total_kobo',
         'status',
+        'gateway',
+        'processed_at',  
     ];
 
-    /**
-     * Relationship to the User model
-     */
+    protected $attributes = [
+        'status'          => self::STATUS_PENDING,
+        'transaction_fee' => 0,
+    ];
+
+    protected $casts = [
+        'amount_kobo'     => 'integer',
+        'transaction_fee' => 'integer',
+        'total_kobo'      => 'integer',
+        'processed_at'    => 'datetime', 
+    ];
+
+    // ── Relationships ─────────────────────────────────────────────────────────
+
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Scope for completed deposits
-     */
-    public function scopeCompleted($query)
+    // ── Status helpers ────────────────────────────────────────────────────────
+
+    public function isPending(): bool
     {
-        return $query->where('status', 'completed');
+        return $this->status === self::STATUS_PENDING;
     }
 
-    /**
-     * Scope for pending deposits
-     */
+    public function isCompleted(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED;
+    }
+
+    public function isFailed(): bool
+    {
+        return $this->status === self::STATUS_FAILED;
+    }
+
+    public function isProcessed(): bool
+    {
+        return $this->processed_at !== null;
+    }
+
+    // ── Scopes ────────────────────────────────────────────────────────────────
+
     public function scopePending($query)
     {
-        return $query->where('status', 'pending');
+        return $query->where('status', self::STATUS_PENDING);
     }
 
-    /**
-     * Scope for failed deposits
-     */
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', self::STATUS_COMPLETED);
+    }
+
     public function scopeFailed($query)
     {
-        return $query->where('status', 'failed');
+        return $query->where('status', self::STATUS_FAILED);
+    }
+
+    public function scopeByGateway($query, string $gateway)
+    {
+        return $query->where('gateway', $gateway);
+    }
+
+    // ── Accessors ─────────────────────────────────────────────────────────────
+    public function getAmountNairaAttribute(): float
+    {
+        return $this->amount_kobo / 100;
+    }
+
+    public function getTotalNairaAttribute(): float
+    {
+        return $this->total_kobo / 100;
     }
 }

@@ -3,156 +3,286 @@
 namespace App\Http\Controllers;
 
 use App\Models\Land;
-use App\Models\LandImage;
-use App\Models\Transaction;
+use App\Models\LandPriceHistory;
+use App\Services\GeoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
+/**
+ * LandController
+ *
+ */
 class LandController extends Controller
 {
-    public function index()
+    public function __construct(private GeoService $geo) {}
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // GET /land  (public, cached)
+    public function index(Request $request)
     {
-        return response()->json(Land::with('images')->get(), 200);
+        $lands = Cache::remember('lands.public', 300, fn () =>
+            Land::with(['images', 'latestPrice'])
+                ->where('is_available', true)
+                ->orderByDesc('created_at')
+                ->get()
+        );
+
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    public function show($id)
+    // GET /lands  (authenticated)
+    public function indexAuth(Request $request)
     {
-        $land = Land::with('images')->find($id);
-        
-        if (!$land) {
-            return response()->json([
-                'error' => [
-                    'message' => 'Land not found',
-                    'code' => 'LAND_NOT_FOUND'
-                ]
-            ], 404);
+        $lands = Cache::remember('lands.auth', 300, fn () =>
+            Land::with(['images', 'latestPrice'])
+                ->orderByDesc('created_at')
+                ->get()
+        );
+
+        return response()->json(['success' => true, 'data' => $lands]);
+    }
+
+    // GET /lands/map  (authenticated, bounding-box filtered)
+    public function mapIndex(Request $request)
+    {
+        $request->validate([
+            'min_lng' => 'required|numeric|between:-180,180',
+            'min_lat' => 'required|numeric|between:-90,90',
+            'max_lng' => 'required|numeric|between:-180,180',
+            'max_lat' => 'required|numeric|between:-90,90',
+        ]);
+
+        try {
+            $this->geo->validateBbox($request->only('min_lng', 'min_lat', 'max_lng', 'max_lat'));
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['bbox' => $e->getMessage()]);
         }
 
-        return response()->json($land, 200);
+        $bboxExpr = $this->geo->makeBboxExpression(
+            (float) $request->min_lng,
+            (float) $request->min_lat,
+            (float) $request->max_lng,
+            (float) $request->max_lat
+        );
+
+        $lands = Land::with(['images', 'latestPrice'])
+            ->whereNotNull('coordinates')
+            ->whereRaw($bboxExpr)
+            ->get(['id', 'title', 'lat', 'lng', 'available_units', 'is_available']);
+
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 
+    // GET /lands/{id}
+    public function show(Land $land)
+    {
+        return response()->json([
+            'success' => true,
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory']),
+        ]);
+    }
+
+    // GET /lands/{id}/units
+    public function units(Land $land)
+    {
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'total_units'     => $land->total_units,
+                'available_units' => $land->available_units,
+                'sold_units'      => $land->total_units - $land->available_units,
+            ],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // POST /admin/lands
     public function store(Request $request)
     {
-        // Check if the user is authenticated and is an admin
-        if (!auth()->user() || !auth()->user()->is_admin) {
-            return response()->json([
-                'error' => [
-                    'message' => 'Unauthorized action',
-                    'code' => 'UNAUTHORIZED'
-                ]
-            ], 403);
+        $request->validate([
+            'title'        => 'required|string|max:200',
+            'location'     => 'required|string|max:200',
+            'size'         => 'required|numeric|min:1',
+            'total_units'  => 'required|integer|min:1',
+            'description'  => 'nullable|string|max:2000',
+            'geometry'     => 'required|array',
+            'geometry.type'=> 'required|in:Point,Polygon',
+            'price_per_unit_kobo' => 'required|integer|min:1',
+            'images'       => 'nullable|array|max:10',
+            'images.*'     => 'image|max:5120',
+        ]);
+
+        try {
+            $this->geo->validateGeojson($request->geometry);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['geometry' => $e->getMessage()]);
         }
 
-        // Validate incoming request data, including images
-        $validatedData = $request->validate([
-            'title' => 'required|string|max:255',
-            'location' => 'required|string|max:255',
-            'size' => 'required|numeric',
-            'price_per_unit' => 'required|numeric',
-            'total_units' => 'required|integer|min:1',
-            'description' => 'nullable|string',
-            'images.*' => 'nullable|image|mimes:jpg,jpeg,png|max:2048', // Validation for multiple images
-        ]);
+        $wkt       = $this->geo->toWkt($request->geometry);
+        $centerLat = null;
+        $centerLng = null;
 
-        // Create the Land entry
-        $land = Land::create([
-            'title' => $validatedData['title'],
-            'location' => $validatedData['location'],
-            'size' => $validatedData['size'],
-            'price_per_unit' => $validatedData['price_per_unit'],
-            'total_units' => $validatedData['total_units'],
-            'available_units' => $validatedData['total_units'],
-            'is_available' => true,
-            'description' => $validatedData['description'],
-        ]);
+        if ($request->geometry['type'] === 'Polygon') {
+            $centroid  = $this->geo->polygonCentroid($request->geometry['coordinates']);
+            $centerLat = $centroid['lat'];
+            $centerLng = $centroid['lng'];
+        } else {
+            [$centerLng, $centerLat] = $request->geometry['coordinates'];
+        }
 
-        // Handle image uploads if provided
-        if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $image) {
-                // Store each image and get the public path
-                $imagePath = $image->store('land_images', 'public');
+        $land = DB::transaction(function () use ($request, $wkt, $centerLat, $centerLng) {
+            $land = Land::create([
+                'title'           => $request->title,
+                'location'        => $request->location,
+                'size'            => $request->size,
+                'total_units'     => $request->total_units,
+                'available_units' => $request->total_units,
+                'description'     => $request->description,
+                'lat'             => $centerLat,
+                'lng'             => $centerLng,
+                'coordinates'     => DB::raw("ST_GeomFromText('{$wkt}', 4326)"),
+                'is_available'    => true,
+            ]);
 
-                // Save each image path in the LandImage table
-                $land->images()->create([
-                    'image_path' => $imagePath
-                ]);
+            LandPriceHistory::create([
+                'land_id'             => $land->id,
+                'price_per_unit_kobo' => $request->price_per_unit_kobo,
+                'price_date'          => today(),
+            ]);
+
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $image) {
+                    $path = $image->store('lands', 'public');
+                    $land->images()->create(['image_path' => $path]);
+                }
             }
-        }
 
-        // Load the images and prepend the full URL to each image
-        $landWithImages = $land->load('images');
-        foreach ($landWithImages->images as $image) {
-            // Prepend the public URL to each image path
-            $image->image_path = Storage::url($image->image_path);
-        }
+            return $land;
+        });
 
-        // Return response with full image URLs
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
         return response()->json([
-            'message' => 'Land created successfully',
-            'land' => $landWithImages
+            'success' => true,
+            'message' => 'Land created successfully.',
+            'data'    => $land->load(['images', 'latestPrice']),
         ], 201);
     }
 
-
-    public function buy(Request $request, $id)
+    // POST /admin/lands/{id}  (POST used for multipart/form-data compatibility)
+    public function update(Request $request, Land $land)
     {
-        $land = Land::find($id);
-
-        if (!$land) {
-            return response()->json([
-                'error' => [
-                    'message' => 'Land not found',
-                    'code' => 'LAND_NOT_FOUND'
-                ]
-            ], 404);
-        }
-
-        // Validate incoming request data for purchase
-        $validatedData = $request->validate([
-            'units' => 'required|integer|min:1',
-            'buyer_id' => 'required|integer',
+        $request->validate([
+            'title'       => 'sometimes|string|max:200',
+            'location'    => 'sometimes|string|max:200',
+            'size'        => 'sometimes|numeric|min:1',
+            'description' => 'nullable|string|max:2000',
+            'geometry'    => 'sometimes|array',
+            'images'      => 'nullable|array|max:10',
+            'images.*'    => 'image|max:5120',
         ]);
 
-        // Check if land is available for purchase
-        if (!$land->is_available) {
-            return response()->json([
-                'error' => [
-                    'message' => 'Land is no longer available for purchase',
-                    'code' => 'LAND_NOT_AVAILABLE'
-                ]
-            ], 400);
+        $updates = $request->only('title', 'location', 'size', 'description');
+
+        if ($request->has('geometry')) {
+            try {
+                $this->geo->validateGeojson($request->geometry);
+            } catch (\InvalidArgumentException $e) {
+                throw ValidationException::withMessages(['geometry' => $e->getMessage()]);
+            }
+
+            $wkt = $this->geo->toWkt($request->geometry);
+            $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
+
+            if ($request->geometry['type'] === 'Polygon') {
+                $centroid          = $this->geo->polygonCentroid($request->geometry['coordinates']);
+                $updates['lat']    = $centroid['lat'];
+                $updates['lng']    = $centroid['lng'];
+            } else {
+                $updates['lng'] = $request->geometry['coordinates'][0];
+                $updates['lat'] = $request->geometry['coordinates'][1];
+            }
         }
 
-        $purchase_units = $validatedData['units'];
+        DB::transaction(function () use ($request, $land, $updates) {
+            $land->update($updates);
 
-        // Check if enough units are available
-        if ($land->available_units < $purchase_units) {
-            return response()->json([
-                'error' => [
-                    'message' => 'Not enough units available',
-                    'code' => 'INSUFFICIENT_UNITS'
-                ]
-            ], 400);
-        }
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $image) {
+                    $path = $image->store('lands', 'public');
+                    $land->images()->create(['image_path' => $path]);
+                }
+            }
+        });
 
-        // Deduct the purchased units from available units
-        $land->available_units -= $purchase_units;
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
 
-        // If no units are left, mark the land as not available
-        if ($land->available_units <= 0) {
-            $land->is_available = false;
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Land updated.',
+            'data'    => $land->fresh()->load(['images', 'latestPrice']),
+        ]);
+    }
 
-        $land->save();
-
-        // Create a transaction record
-        Transaction::create([
-            'land_id' => $land->id,
-            'user_id' => $validatedData['buyer_id'],
-            'percentage' => $purchase_units,
-            'price' => $purchase_units * $land->price_per_unit,
+    // PATCH /admin/lands/{id}/price
+    public function updatePrice(Request $request, Land $land)
+    {
+        $request->validate([
+            'price_per_unit_kobo' => 'required|integer|min:1',
+            'price_date'          => 'sometimes|date|before_or_equal:today',
         ]);
 
-        return response()->json(['message' => 'Purchase successful'], 200);
+        $priceDate = $request->input('price_date', today()->toDateString());
+
+        $priceRecord = LandPriceHistory::updateOrCreate(
+            ['land_id' => $land->id, 'price_date' => $priceDate],
+            ['price_per_unit_kobo' => $request->price_per_unit_kobo]
+        );
+
+        event(new \App\Events\LandPriceChanged($land->id, $request->price_per_unit_kobo, $priceDate));
+
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Price updated.',
+            'data'    => $priceRecord,
+        ]);
+    }
+
+    // PATCH /admin/lands/{id}/availability  (enable / disable)
+    public function toggleAvailability(Request $request, Land $land)
+    {
+        $land->update(['is_available' => ! $land->is_available]);
+
+        Cache::forget('lands.public');
+        Cache::forget('lands.auth');
+
+        return response()->json([
+            'success'      => true,
+            'is_available' => $land->is_available,
+        ]);
+    }
+
+    // GET /admin/lands
+    public function adminIndex()
+    {
+        $lands = Land::with(['images', 'latestPrice'])
+            ->orderByDesc('created_at')
+            ->paginate(20);
+
+        return response()->json(['success' => true, 'data' => $lands]);
     }
 }

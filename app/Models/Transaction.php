@@ -9,7 +9,8 @@ class Transaction extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['land_id', 'user_id', 'units', 'price', 'status',  'reference'];
+    protected $fillable = ['land_id', 'user_id', 'type','units', 'amount_kobo', 'status', 
+     'reference', 'message', 'transaction_date'];
 
 
     // A transaction belongs to a land

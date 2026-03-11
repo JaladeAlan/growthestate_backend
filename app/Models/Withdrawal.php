@@ -9,40 +9,98 @@ class Withdrawal extends Model
 {
     use HasFactory;
 
-    // Mass assignable attributes
-    protected $fillable = [
-        'user_id',
-        'amount',
-        'status',
-        'reference',
+    // ── Status constants ──────────────────────────────────────────────────────
+    const STATUS_PENDING    = 'pending';
+    const STATUS_PROCESSING = 'processing';
+    const STATUS_COMPLETED  = 'completed';
+    const STATUS_FAILED     = 'failed';
+
+    /** Statuses that are terminal — no further processing should occur. */
+    const TERMINAL_STATUSES = [
+        self::STATUS_COMPLETED,
+        self::STATUS_FAILED,
     ];
 
-    // Status Constants
-    public const STATUS_PENDING = 'pending';
-    public const STATUS_COMPLETED = 'completed';
-    public const STATUS_FAILED = 'failed';
+    // ── Table / fillable ──────────────────────────────────────────────────────
 
-    // Define relationship with User
+    protected $table = 'withdrawals';
+
+    protected $fillable = [
+        'user_id',
+        'reference',
+        'amount_kobo',
+        'status',
+        'gateway',
+    ];
+
+    protected $attributes = [
+        'status' => self::STATUS_PENDING,
+    ];
+
+    protected $casts = [
+        'amount_kobo' => 'integer',
+    ];
+
+    // ── Relationships ─────────────────────────────────────────────────────────
+
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    // Check if withdrawal is pending
-    public function isPending()
+    // ── Status helpers ────────────────────────────────────────────────────────
+
+    public function isPending(): bool
     {
         return $this->status === self::STATUS_PENDING;
     }
 
-    // Check if withdrawal is completed
-    public function isCompleted()
+    public function isProcessing(): bool
+    {
+        return $this->status === self::STATUS_PROCESSING;
+    }
+
+    public function isCompleted(): bool
     {
         return $this->status === self::STATUS_COMPLETED;
     }
 
-    // Check if withdrawal failed
-    public function isFailed()
+    public function isFailed(): bool
     {
         return $this->status === self::STATUS_FAILED;
+    }
+
+    public function isTerminal(): bool
+    {
+        return in_array($this->status, self::TERMINAL_STATUSES, true);
+    }
+
+    // ── Scopes ────────────────────────────────────────────────────────────────
+
+    public function scopePending($query)
+    {
+        return $query->where('status', self::STATUS_PENDING);
+    }
+
+    public function scopeProcessing($query)
+    {
+        return $query->where('status', self::STATUS_PROCESSING);
+    }
+
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', self::STATUS_COMPLETED);
+    }
+
+    public function scopeFailed($query)
+    {
+        return $query->where('status', self::STATUS_FAILED);
+    }
+
+    // ── Accessors ─────────────────────────────────────────────────────────────
+
+    public function getAmountNairaAttribute(): float
+    {
+        return $this->amount_kobo / 100;
     }
 }

@@ -4,9 +4,9 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Messages\BroadcastMessage;
+use Illuminate\Notifications\Notification;
 use App\Models\Withdrawal;
 
 class WithdrawalFailedNotification extends Notification implements ShouldQueue
@@ -27,32 +27,45 @@ class WithdrawalFailedNotification extends Notification implements ShouldQueue
 
     public function toMail($notifiable)
     {
+        $amount = number_format(($this->withdrawal->amount_kobo ?? 0) / 100, 2);
+
         return (new MailMessage)
             ->subject('Withdrawal Failed')
             ->greeting('Hello ' . $notifiable->name . ',')
-            ->line('Your withdrawal request of ₦' . number_format($this->withdrawal->amount, 2) . ' has failed.')
+            ->line("Your withdrawal request of ₦{$amount} has failed.")
             ->line('Please try again or contact support.')
             ->action('View Withdrawals', url('/withdrawals'))
             ->line('Thank you for using our service.');
     }
 
-    public function toArray($notifiable)
+    public function toDatabase($notifiable)
     {
+        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
+
         return [
-            'message' => 'Your withdrawal request of ₦' . number_format($this->withdrawal->amount, 2) . ' has failed.',
+            'message' => 'Your withdrawal request of ₦' . number_format($amountKobo / 100, 2) . ' has failed.',
             'reference' => $this->withdrawal->reference ?? null,
-            'amount' => $this->withdrawal->amount,
+            'amount_kobo' => $amountKobo,
             'status' => 'failed',
             'failed_at' => now(),
         ];
     }
 
-    // public function toBroadcast($notifiable)
-    // {
-    //     return new BroadcastMessage([
-    //         'message' => 'Your withdrawal request of ₦' . number_format($this->withdrawal->amount, 2) . ' has failed.',
-    //         'reference' => $this->withdrawal->reference ?? null,
-    //         'amount' => $this->withdrawal->amount,
-    //     ]);
-    // }
+    public function toBroadcast($notifiable)
+    {
+        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
+
+        return new BroadcastMessage([
+            'message' => 'Your withdrawal request of ₦' . number_format($amountKobo / 100, 2) . ' has failed.',
+            'reference' => $this->withdrawal->reference ?? null,
+            'amount_kobo' => $amountKobo,
+            'status' => 'failed',
+            'failed_at' => now(),
+        ]);
+    }
+
+    public function toArray($notifiable)
+    {
+        return $this->toDatabase($notifiable);
+    }
 }

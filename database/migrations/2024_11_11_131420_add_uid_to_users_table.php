@@ -17,17 +17,21 @@ class AddUidToUsersTable extends Migration
     {
         // Step 1: Add the 'uid' column first, without the unique constraint
         Schema::table('users', function (Blueprint $table) {
-            $table->string('uid')->nullable()->after('id');
+            $table->uuid('uid')->nullable()->after('id');
         });
 
-        // Step 2: Ensure all existing records have unique values in the 'uid' column
-        DB::table('users')->whereNull('uid')->update([
-            'uid' => DB::raw('UUID()') // Generate a unique UUID for users without a 'uid'
-        ]);
+        // Step 2: Fill in existing records with UUIDs
+        $users = DB::table('users')->whereNull('uid')->get();
 
-        // Step 3: Apply the unique constraint to the 'uid' column
+        foreach ($users as $user) {
+            DB::table('users')
+                ->where('id', $user->id)
+                ->update(['uid' => Str::uuid()->toString()]);
+        }
+
+        // Step 3: Make the column non-nullable and unique
         Schema::table('users', function (Blueprint $table) {
-            $table->unique('uid');
+            $table->uuid('uid')->unique()->change();
         });
     }
 
@@ -38,7 +42,6 @@ class AddUidToUsersTable extends Migration
      */
     public function down()
     {
-        // Drop the unique constraint and the 'uid' column in the 'down' method
         Schema::table('users', function (Blueprint $table) {
             $table->dropUnique(['uid']);
             $table->dropColumn('uid');
