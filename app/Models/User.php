@@ -67,21 +67,9 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
     protected static function booted()
     {
         static::creating(function ($user) {
-            $maxAttempts = 10;
-            $attempts    = 0;
-
-            do {
-                $uid = 'USR-' . strtoupper(Str::random(6));
-                $attempts++;
-
-                if ($attempts >= $maxAttempts) {
-                    throw new \RuntimeException(
-                        'Unable to generate a unique user UID after ' . $maxAttempts . ' attempts.'
-                    );
-                }
-            } while (self::where('uid', $uid)->exists());
-
-            $user->uid = $uid;
+            if (empty($user->uid)) {
+                $user->uid = (string) \Illuminate\Support\Str::uuid();
+            }
         });
 
         static::created(function (User $user) {

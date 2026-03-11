@@ -15,6 +15,7 @@ class AdminUserSeeder extends Seeder
             ['email' => 'jaladealan007@gmail.com'],
             [
                 'name' => 'Admin',
+                'uid'                => (string) Str::uuid(),
                 'password' => Hash::make('Securepass123!'),
                 'is_admin' => 1,
                 'email_verified_at' => Carbon::now(),
