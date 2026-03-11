@@ -1,0 +1,1161 @@
+openapi: 3.1.0
+info:
+  title: Growth Estate API
+  version: 1.0.0
+  description: >
+    Enterprise-grade OpenAPI 3.1 specification for the Growth Estate application.
+    Includes authentication (JWT), email verification, password reset, lands, purchases,
+    deposits, withdrawals, Paystack webhook, bank resolution, notifications, and PIN flows.
+
+servers:
+  - url: https://growth-estate.onrender.com/api
+    description: Production
+  - url: http://127.0.0.1:8000/api
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication and user sessions
+  - name: Email Verification
+    description: Email verification flows
+  - name: Password Reset
+    description: Password reset flows
+  - name: Lands
+    description: Land listings and admin actions
+  - name: Purchase
+    description: Purchase and sell units
+  - name: Deposits
+    description: Deposit initiation and callbacks
+  - name: Withdrawals
+    description: Withdrawals & Paystack transfers
+  - name: Banks
+    description: Bank lists and account resolution
+  - name: Notifications
+    description: User notification endpoints
+  - name: PIN
+    description: Transaction PIN flows
+  - name: Webhooks
+    description: Paystack webhook endpoints
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    landId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Land identifier
+    referenceParam:
+      name: reference
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Transaction/withdrawal/deposit reference.
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: object
+          nullable: true
+
+    ApiResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        account_number:
+          type: string
+          nullable: true
+        bank_code:
+          type: string
+          nullable: true
+        recipient_code:
+          type: string
+          nullable: true
+        balance:
+          type: number
+          format: float
+        is_admin:
+          type: boolean
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Land:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        location:
+          type: string
+        size:
+          type: number
+        price_per_unit:
+          type: number
+        total_units:
+          type: integer
+        available_units:
+          type: integer
+        is_available:
+          type: boolean
+        description:
+          type: string
+          nullable: true
+        images:
+          type: array
+          items:
+            type: string
+            description: Public URL to image
+
+    LandList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Land'
+
+    PurchaseRequest:
+      type: object
+      properties:
+        units:
+          type: integer
+          minimum: 1
+      required: [units]
+
+    SellRequest:
+      type: object
+      properties:
+        units:
+          type: integer
+          minimum: 1
+      required: [units]
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        land_id:
+          type: integer
+        units:
+          type: integer
+        price:
+          type: number
+        status:
+          type: string
+        reference:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    PurchaseSummary:
+      type: object
+      properties:
+        reference:
+          type: string
+        amount_paid:
+          type: number
+        units:
+          type: integer
+
+    Deposit:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        reference:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Withdrawal:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        amount:
+          type: number
+        status:
+          type: string
+        reference:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Bank:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+
+    BankList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Bank'
+
+    ResolveAccountRequest:
+      type: object
+      properties:
+        account_number:
+          type: string
+        bank_code:
+          type: string
+      required: [account_number, bank_code]
+
+    ResolveAccountResponse:
+      type: object
+      properties:
+        account_name:
+          type: string
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        data:
+          type: object
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    PinForgotRequest:
+      type: object
+      properties:
+        email:
+          type: string
+      required: [email]
+
+    PinVerifyRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        code:
+          type: string
+      required: [email, code]
+
+    PinResetRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        code:
+          type: string
+        new_pin:
+          type: string
+      required: [email, code, new_pin]
+
+    ChangePasswordRequest:
+      type: object
+      properties:
+        old_password:
+          type: string
+        new_password:
+          type: string
+      required: [old_password, new_password]
+
+    PaystackWebhookSchema:
+      type: object
+      properties:
+        event:
+          type: string
+        data:
+          type: object
+
+paths:
+
+  ################################################################
+  # AUTH — registration, login, profile, refresh, logout
+  ################################################################
+
+  /register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        "201":
+          description: Registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /login:
+    post:
+      tags: [Auth]
+      summary: Login and receive JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        "401":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: Get authenticated user details
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh JWT token
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /logout:
+    post:
+      tags: [Auth]
+      summary: Log out user (invalidate token)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logged out
+
+  ################################################################
+  # EMAIL VERIFICATION
+  ################################################################
+
+  /email/verify/code:
+    post:
+      tags: [Email Verification]
+      summary: Verify a user's email using a code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "200":
+          description: Email verified
+
+  /email/resend-verification:
+    post:
+      tags: [Email Verification]
+      summary: Resend email verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+      responses:
+        "200":
+          description: Verification email resent
+
+  ################################################################
+  # PASSWORD RESET (code-based)
+  ################################################################
+
+  /password/reset/code:
+    post:
+      tags: [Password Reset]
+      summary: Send a password reset code to the user's email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+      responses:
+        "200":
+          description: Reset code sent
+
+  /password/reset/verify:
+    post:
+      tags: [Password Reset]
+      summary: Verify reset code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                code:
+                  type: string
+      responses:
+        "200":
+          description: Reset code verified
+
+  /password/reset:
+    post:
+      tags: [Password Reset]
+      summary: Reset password using code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                code:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        "200":
+          description: Password reset successful
+
+  ################################################################
+  # LANDS (public and protected)
+  ################################################################
+
+  /land:
+    get:
+      tags: [Lands]
+      summary: Public listing of available lands
+      responses:
+        "200":
+          description: Public land list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandList'
+
+  /lands:
+    get:
+      tags: [Lands]
+      summary: Get all lands (protected)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Land list (protected)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandList'
+
+    post:
+      tags: [Lands]
+      summary: Create a new land (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                location:
+                  type: string
+                size:
+                  type: number
+                price_per_unit:
+                  type: number
+                total_units:
+                  type: integer
+                description:
+                  type: string
+                images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "201":
+          description: Land created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  land:
+                    $ref: '#/components/schemas/Land'
+
+  /lands/{id}:
+    get:
+      tags: [Lands]
+      summary: Get specific land
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      responses:
+        "200":
+          description: Land retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Land'
+        "404":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /lands/{id}/purchase:
+    post:
+      tags: [Purchase]
+      description: Purchase units of land. Requires JWT + verified email and transaction PIN middleware.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRequest'
+      responses:
+        "200":
+          description: Purchase successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseSummary'
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Unauthorized / PIN missing
+
+  /lands/{id}/sell:
+    post:
+      tags: [Purchase]
+      description: Sell units back. Requires JWT + verified email and transaction PIN middleware.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SellRequest'
+      responses:
+        "200":
+          description: Units sold
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseSummary'
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /lands/{id}/units:
+    get:
+      tags: [Lands]
+      summary: Get units owned by authenticated user for specific land
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      responses:
+        "200":
+          description: Units owned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  land_id:
+                    type: integer
+                  units_owned:
+                    type: integer
+
+  ################################################################
+  # USER / TRANSACTIONS / STATS
+  ################################################################
+
+  /user/lands:
+    get:
+      tags: [User]
+      summary: Get all lands and units owned by user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Owned lands
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  owned_lands:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        land_id:
+                          type: integer
+                        land_name:
+                          type: string
+                        units_owned:
+                          type: integer
+
+  /user/stats:
+    get:
+      tags: [User]
+      summary: Get user stats (custom metrics)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Stats returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_invested:
+                    type: number
+                  total_units:
+                    type: integer
+
+  /transactions/user:
+    get:
+      tags: [User]
+      summary: Get user transactions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+
+  ################################################################
+  # TRANSACTION PIN
+  ################################################################
+
+  /pin/forgot:
+    post:
+      tags: [PIN]
+      summary: Send PIN reset code to user's email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinForgotRequest'
+      responses:
+        "200":
+          description: Code sent
+
+  /pin/verify-code:
+    post:
+      tags: [PIN]
+      summary: Verify PIN reset code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinVerifyRequest'
+      responses:
+        "200":
+          description: Code verified
+
+  /pin/reset:
+    post:
+      tags: [PIN]
+      summary: Reset transaction PIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinResetRequest'
+      responses:
+        "200":
+          description: PIN updated
+
+  /pin/set:
+    post:
+      tags: [PIN]
+      summary: Set transaction PIN
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pin:
+                  type: string
+      responses:
+        "200":
+          description: PIN set
+
+  /pin/update:
+    post:
+      tags: [PIN]
+      summary: Update transaction PIN
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                old_pin:
+                  type: string
+                new_pin:
+                  type: string
+      responses:
+        "200":
+          description: PIN updated
+
+  ################################################################
+  # DEPOSITS
+  ################################################################
+
+  /deposit:
+    post:
+      tags: [Deposits]
+      summary: Initiate a deposit (creates a pending deposit & returns payment URL)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+      responses:
+        "200":
+          description: Deposit initiated with payment_url and reference
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_url:
+                    type: string
+                  reference:
+                    type: string
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /deposit/callback:
+    get:
+      tags: [Deposits, Webhooks]
+      summary: Deposit callback route (signed, using temporary signed URL)
+      description: >
+        This route is expected to be called by Paystack (or redirect after payment) with a signed temporary URL.
+        Implementation uses Laravel signed routes for short-lived callback URLs.
+      parameters:
+        - name: reference
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deposit verified and processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  amount:
+                    type: number
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  ################################################################
+  # WITHDRAWALS
+  ################################################################
+
+  /withdraw:
+    post:
+      tags: [Withdrawals]
+      summary: Request a withdrawal (creates a pending withdrawal, decrements balance)
+      security:
+        - bearerAuth: []
+      description: Requires transaction PIN middleware to have been validated on the route.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+      responses:
+        "200":
+          description: Withdrawal request initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  reference:
+                    type: string
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /withdrawals/{reference}:
+    get:
+      tags: [Withdrawals]
+      summary: Get status of a withdrawal by reference
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/referenceParam'
+      responses:
+        "200":
+          description: Withdrawal status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Withdrawal'
+        "404":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /withdrawal/retry:
+    get:
+      tags: [Withdrawals]
+      summary: Retry pending withdrawals (admin/internal)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Pending withdrawals retried
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  ################################################################
+  # BANKS & ACCOUNT RESOLUTION (Paystack helpers)
+  ################################################################
+
+  /paystack/banks:
+    get:
+      tags: [Banks]
+      summary: Get cached list of banks (from Paystack)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Bank list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankList'
+
+  /paystack/resolve-account:
+    post:
+      tags: [Banks]
+      summary: Resolve account number to account name using Paystack
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveAccountRequest'
+      responses:
+        "200":
+          description: Resolved account name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveAccountResponse'
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  /user/bank-details:
+    put:
+      tags: [User, Banks]
+      summary: Update user's bank details (account number, bank code, bank name)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account_number:
+                  type: string
+                bank_code:
+                  type: string
+                bank_name:
+                  type: string
+      responses:
+        "200":
+          description: Bank details updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "400":
+          $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/schemas/ErrorResponse'
+
+  ################################################################
+  # NOTIFICATIONS
+  ################################################################
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Get all notifications for authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+
+  /notifications/unread:
+    get:
+      tags: [Notifications]
+      summary: Get only unread notifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Unread notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+
+  /notifications/read:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  ################################################################
+  # PAYSTACK WEBHOOK (PUBLIC)
+  ################################################################
+
+  /paystack/webhook:
+    post:
+      tags: [Webhooks]
+      summary: Paystack webhook for transfer/withdrawal events
+      description: >
+        Public endpoint for Paystack webhook events. When not running in test mode,
+        the controller verifies the 'x-paystack-signature' header using your webhook secret.
+        Example header: x-paystack-signature: <sha512-hmac>
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaystackWebhookSchema'
+      parameters:
+        - name: x-paystack-signature
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Paystack HMAC SHA512 signature header (required in production)
+      responses:
+        "200":
+          description: Callback handled
+        "403":
+          description: Invalid signature (unauthorized webhook)
+        "404":
+          description: Resource not found
+
+  ################################################################
+  # MISC
+  ################################################################
+
+  /user/change-password:
+    post:
+      tags: [Auth]
+      summary: Change password for authenticated user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        "200":
+          description: Password changed

@@ -1,34 +1,100 @@
 <?php
 
+/**
+ * CORS Configuration
+ */
+
 return [
 
     /*
-    |--------------------------------------------------------------------------
-    | Cross-Origin Resource Sharing (CORS) Configuration
-    |--------------------------------------------------------------------------
-    |
-    | Here you may configure your settings for cross-origin resource sharing
-    | or "CORS". This determines what cross-origin operations may execute
-    | in web browsers. You are free to adjust these settings as needed.
-    |
-    | To learn more: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-    |
+    |----------------------------------------------------------------------
+    | Paths covered by CORS headers
+    |----------------------------------------------------------------------
     */
+    'paths' => ['api/*', 'sanctum/csrf-cookie'],
 
-    'paths' => ['*'],
+    /*
+    |----------------------------------------------------------------------
+    | Allowed origins
+    |----------------------------------------------------------------------
+    | List every origin that is permitted to make credentialed requests.
+    | Prefer explicit URLs over wildcard patterns.
+    |
+    | Environment-variable override lets you manage environments without
+    | changing code:
+    |   CORS_ALLOWED_ORIGINS=https://sproutvest.com,https://app.sproutvest.com
+    */
+    'allowed_origins' => array_filter(
+        array_map(
+            'trim',
+            explode(',', env('CORS_ALLOWED_ORIGINS', implode(',', [
+                // ── Production ────────────────────────────────────────────
+                'https://sproutvest.com',
+                'https://www.sproutvest.com',
+                'https://app.sproutvest.com',
 
-    'allowed_methods' => ['*'],
+                // ── Staging / preview ─────────────────────────────────────
+                'https://sproutapp-eta.vercel.app',
+                'https://growthfrontends.vercel.app',
+                'https://react-iota-taupe.vercel.app',
+            
+                // ── Local development ─────────────────────────────────────
+                'http://localhost:3000',
+                'http://localhost:5173',
+            ])))
+        )
+    ),
 
-    'allowed_origins' => [env('FRONTEND_URL', 'http://localhost:3000')],
-
+    /*
+    |----------------------------------------------------------------------
+    | Allowed origin patterns (regex) — INTENTIONALLY EMPTY
+    |----------------------------------------------------------------------
+    */
     'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+    /*
+    |----------------------------------------------------------------------
+    | Allowed HTTP methods
+    |----------------------------------------------------------------------
+    */
+    'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
+    /*
+    |----------------------------------------------------------------------
+    | Allowed request headers
+    |----------------------------------------------------------------------
+    */
+    'allowed_headers' => [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'Accept',
+        'Origin',
+        'X-CSRF-TOKEN',
+    ],
+
+    /*
+    |----------------------------------------------------------------------
+    | Headers exposed to the browser
+    |----------------------------------------------------------------------
+    */
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    /*
+    |----------------------------------------------------------------------
+    | Preflight cache lifetime (seconds)
+    |----------------------------------------------------------------------
+    */
+    'max_age' => 86400,
 
+    /*
+    |----------------------------------------------------------------------
+    | Credentials (cookies, Authorization header)
+    |----------------------------------------------------------------------
+    | Must be true for JWT cookies / session-based auth to work cross-origin.
+    | When true, `allowed_origins` must be explicit — "*" is rejected by
+    | browsers for credentialed requests.
+    */
     'supports_credentials' => true,
 
 ];

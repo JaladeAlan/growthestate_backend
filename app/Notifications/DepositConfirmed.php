@@ -5,58 +5,59 @@ namespace App\Notifications;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Notifications\Messages\BroadcastMessage;
-use Illuminate\Notifications\Messages\DatabaseMessage;
 use Illuminate\Contracts\Queue\ShouldQueue;
 
 class DepositConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    protected $amount;
+    protected $amountKobo;
 
-    public function __construct($amount)
+    public function __construct(int $amountKobo)
     {
-        $this->amount = $amount;
+        $this->amountKobo = $amountKobo;
     }
 
+    /**
+     * Delivery channels
+     */
     public function via($notifiable)
     {
-        return ['mail', 'database', 'broadcast'];
+        return ['mail', 'database']; 
     }
 
+    /**
+     * Email representation
+     */
     public function toMail($notifiable)
     {
         return (new MailMessage)
             ->subject('Deposit Confirmation')
             ->greeting('Hello ' . $notifiable->name . '!')
-            ->line('Your deposit of ₦ ' . number_format($this->amount, 2) . ' was successfully processed.')
+            ->line('Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successfully processed.')
             ->action('View Account', url('/account'))
             ->line('Thank you for using our application!')
             ->salutation('Best regards, ' . config('app.name'));
     }
 
+    /**
+     * Database representation
+     */
     public function toDatabase($notifiable)
     {
         return [
-            'message' => 'Your deposit of ₦ ' . number_format($this->amount, 2) . ' was successful.',
-            'amount' => $this->amount,
+            'message' => 'Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successful.',
+            'amount_kobo' => $this->amountKobo,
             'type' => 'deposit',
-            'timestamp' => now(),
+            'created_at' => now(),
         ];
     }
 
+    /**
+     * Array fallback
+     */
     public function toArray($notifiable)
     {
         return $this->toDatabase($notifiable);
     }
-
-    // public function toBroadcast($notifiable)
-    // {
-    //     return new BroadcastMessage([
-    //         'message' => 'Your deposit of ₦' . number_format($this->amount, 2) . ' was successful.',
-    //         'amount' => $this->amount,
-    //         'type' => 'deposit',
-    //     ]);
-    // }
 }

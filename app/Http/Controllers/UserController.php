@@ -2,43 +2,44 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Purchase;
-use App\Models\Land;
+use App\Models\Deposit;
+use App\Models\LandPriceHistory;
+use App\Models\Transaction;
+use App\Models\User;
+use App\Models\UserLand;
+use App\Models\Withdrawal;
+use App\Mail\TransactionPinResetMail;
+use App\Services\PortfolioService;
 use Illuminate\Http\Request;
-use Tymon\JWTAuth\Facades\JWTAuth;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class UserController extends Controller
 {
-    // Retrieve lands and units owned by the user
     public function getUserUnitsForLand(Request $request, $landId)
     {
         try {
-            // Get the authenticated user from the JWT token
             $user = JWTAuth::parseToken()->authenticate();
         } catch (\Exception $e) {
             return response()->json(['error' => 'User not authenticated'], 401);
         }
 
-        // Query the purchases table for the user's units for the specific land
-        $purchase = Purchase::where('user_id', $user->id)
-                            ->where('land_id', $landId)
-                            ->first();
-
-        // Logging if desired
-        Log::info("User {$user->id} queried units for land {$landId}", [
-            'units_owned' => $purchase ? $purchase->units : 0,
-        ]);
+        $userLand = DB::table('user_land')
+            ->where('user_id', $user->id)
+            ->where('land_id', $landId)
+            ->first();
 
         return response()->json([
-            'land_id' => $landId,
-            'units_owned' => $purchase ? $purchase->units : 0,
+            'land_id'     => $landId,
+            'units_owned' => $userLand ? $userLand->units : 0,
         ]);
     }
 
-    // Retrieve all lands and units owned by the user
     public function getAllUserLands(Request $request)
     {
         try {
@@ -47,93 +48,389 @@ class UserController extends Controller
             return response()->json(['error' => 'User not authenticated'], 401);
         }
 
-        // Fetch all lands and units the user owns from purchases
-        $purchases = Purchase::with('land')
-                             ->where('user_id', $user->id)
-                             ->get();
+        $userLands = $user->userLands()
+            ->with('land')
+            ->where('units', '>', 0)
+            ->get();
 
-        // Prepare response data
-        $ownedLands = $purchases->map(function ($purchase) {
+        if ($userLands->isEmpty()) {
+            return response()->json(['owned_lands' => []]);
+        }
+
+        $landIds = $userLands->pluck('land_id')->toArray();
+        $prices  = LandPriceHistory::currentPricesForLands($landIds);
+
+        $ownedLands = $userLands->map(function ($userLand) use ($prices) {
+            $price        = $prices->get($userLand->land_id);
+            $pricePerUnit = $price ? $price->price_per_unit_kobo : 0;
+
             return [
-                'land_id' => $purchase->land->id,
-                'land_name' => $purchase->land->title,
-                'units_owned' => $purchase->units,
+                'land_id'              => $userLand->land->id,
+                'land_name'            => $userLand->land->title,
+                'units_owned'          => $userLand->units,
+                'price_per_unit_kobo'  => $pricePerUnit,
+                'price_per_unit_naira' => $pricePerUnit / 100,
+                'current_value'        => ($userLand->units * $pricePerUnit) / 100,
             ];
         });
 
         return response()->json(['owned_lands' => $ownedLands]);
     }
 
-      // Update user's bank details using Paystack API
-      public function updateBankDetails(Request $request)
-      {
-          $user = JWTAuth::parseToken()->authenticate();
-      
-          // Validate the incoming data
-          $request->validate([
-              'account_number' => 'required|numeric|digits_between:10,12', // Adjust length for your region
-              'bank_name' => 'required|string',
-          ]);
-      
-          try {
-              // Step 1: Fetch bank codes from Paystack (Cache for efficiency)
-              $banks = Cache::remember('paystack_banks', now()->addHours(12), function () {
-                  $response = Http::withToken(config('services.paystack.secret_key'))
-                      ->get('https://api.paystack.co/bank');
-      
-                  return $response->successful() ? $response->json()['data'] : [];
-              });
-      
-              $bank = collect($banks)->firstWhere('name', $request->bank_name);
-      
-              if (!$bank) {
-                  return response()->json(['error' => 'Invalid bank name provided'], 400);
-              }
-      
-              $bankCode = $bank['code'];
-      
-              // Step 2: Resolve account number with Paystack
-              $resolveResponse = Http::withToken(config('services.paystack.secret_key'))
-                  ->get('https://api.paystack.co/bank/resolve', [
-                      'account_number' => $request->account_number,
-                      'bank_code' => $bankCode,
-                  ]);
-      
-              if (!$resolveResponse->successful()) {
-                  return response()->json([
-                      'error' => 'Failed to resolve account number',
-                      'details' => $resolveResponse->json(),
-                  ], 400);
-              }
-      
-              $resolvedData = $resolveResponse->json();
-              if (!isset($resolvedData['data']['account_name'])) {
-                  return response()->json(['error' => 'Invalid account details returned'], 400);
-              }
-      
-              $accountName = $resolvedData['data']['account_name'];
+    public function setTransactionPin(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
 
-              \Log::info('Updating bank details:', [
+        $request->validate([
+            'pin'              => 'required|digits:4',
+            'pin_confirmation' => 'required|same:pin',
+        ]);
+
+        if ($user->transaction_pin) {
+            return response()->json(['error' => 'Transaction PIN is already set. Use update instead.'], 400);
+        }
+
+        $user->transaction_pin = Hash::make($request->pin);
+        $user->save();
+
+        return response()->json(['message' => 'Transaction PIN set successfully.']);
+    }
+
+    public function updateTransactionPin(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        $request->validate([
+            'old_pin'             => 'required|digits:4',
+            'new_pin'             => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',
+        ]);
+
+        if (! Hash::check($request->old_pin, $user->transaction_pin)) {
+            return response()->json(['error' => 'Old PIN is incorrect.'], 400);
+        }
+
+        $user->transaction_pin = Hash::make($request->new_pin);
+        $user->save();
+
+        return response()->json(['message' => 'Transaction PIN updated successfully.']);
+    }
+
+    public function sendPinResetCode(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $user = User::where('email', $request->email)->first();
+
+        if ($user) {
+            $code = random_int(100000, 999999);
+            $user->pin_reset_code       = Hash::make((string) $code);
+            $user->pin_reset_expires_at = now()->addMinutes(10);
+            $user->save();
+            Mail::to($user->email)->queue(new TransactionPinResetMail($user, $code));
+        }
+
+        // Always return same response to prevent enumeration
+        return response()->json(['message' => 'If that email is registered, a PIN reset code has been sent.']);
+    }
+
+    /**
+     * Verify PIN reset code.
+     *
+     */
+    public function verifyPinResetCode(Request $request)
+    {
+        $request->validate(['email' => 'required|email', 'code' => 'required|numeric']);
+
+        $user = User::where('email', $request->email)->first();
+
+        if (
+            ! $user ||
+            ! $user->pin_reset_code ||
+            ! $user->pin_reset_expires_at ||
+            now()->greaterThan($user->pin_reset_expires_at) ||
+            ! Hash::check((string) $request->code, $user->pin_reset_code)
+        ) {
+            return response()->json(['error' => 'Invalid or expired code.'], 400);
+        }
+
+        return response()->json(['message' => 'Code verified.']);
+    }
+
+    /**
+     * Reset transaction PIN — atomically re-validates the code and expiry
+     * in a single DB transaction, preventing TOCTOU race conditions.
+     */
+    public function resetTransactionPin(Request $request)
+    {
+        $request->validate([
+            'email'               => 'required|email',
+            'code'                => 'required|numeric',
+            'new_pin'             => 'required|digits:4',
+            'new_pin_confirmation' => 'required|same:new_pin',
+        ]);
+
+        DB::transaction(function () use ($request) {
+            // Lock the user row so concurrent resets queue behind this one
+            $user = User::where('email', $request->email)
+                ->lockForUpdate()
+                ->first();
+
+            if (
+                ! $user ||
+                ! $user->pin_reset_code ||
+                ! $user->pin_reset_expires_at ||
+                now()->greaterThan($user->pin_reset_expires_at) ||
+                ! Hash::check((string) $request->code, $user->pin_reset_code)
+            ) {
+                abort(400, 'Invalid or expired code.');
+            }
+
+            $user->transaction_pin      = Hash::make($request->new_pin);
+            $user->pin_reset_code       = null;
+            $user->pin_reset_expires_at = null;
+            $user->save();
+        });
+
+        return response()->json(['message' => 'Transaction PIN reset successfully.']);
+    }
+
+    public function updateBankDetails(Request $request)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        $request->validate([
+            'account_number' => 'required|numeric|digits_between:10,12',
+            'bank_name'      => 'required|string',
+        ]);
+
+        try {
+            $banks = $this->getPaystackBanks();
+            $bank  = collect($banks)->firstWhere('name', $request->bank_name);
+
+            if (! $bank) {
+                return response()->json(['error' => 'Invalid bank name.'], 400);
+            }
+
+            $bankCode = $bank['code'];
+
+            $resolveResponse = Http::withToken(config('services.paystack.secret_key'))
+                ->get('https://api.paystack.co/bank/resolve', [
+                    'account_number' => $request->account_number,
+                    'bank_code'      => $bankCode,
+                ]);
+
+            if (! $resolveResponse->successful()) {
+                return response()->json(['error' => 'Failed to verify account number.'], 400);
+            }
+
+            $accountName = $resolveResponse->json()['data']['account_name'] ?? null;
+            if (! $accountName) {
+                return response()->json(['error' => 'Invalid account details.'], 400);
+            }
+
+            $user->update([
                 'account_number' => $request->account_number,
-                'bank_code' => $bankCode,
-                'bank_name' => $request->bank_name,
-                'account_name' => $accountName,
+                'bank_code'      => $bankCode,
+                'bank_name'      => $request->bank_name,
+                'account_name'   => $accountName,
+                'recipient_code' => null,
             ]);
-      
-              // Step 3: Update the user's bank details
-              $user->update([
-                  'account_number' => $request->account_number,
-                  'bank_code' => $bankCode,
-                  'bank_name' => $request->bank_name,
-                  'account_name' => $accountName,
-              ]);
-      
-              return response()->json(['message' => 'Bank details updated successfully'], 200);
-          } catch (\Exception $e) {
-              return response()->json([
-                  'error' => 'An error occurred while updating bank details',
-                  'message' => $e->getMessage(),
-              ], 500);
-          }
-}
+
+            return response()->json([
+                'message' => 'Bank details updated successfully.',
+                'data'    => [
+                    'bank_name'      => $request->bank_name,
+                    'bank_code'      => $bankCode,
+                    'account_number' => $request->account_number,
+                    'account_name'   => $accountName,
+                ],
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Bank update error', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+            return response()->json(['error' => 'An unexpected error occurred.'], 500);
+        }
+    }
+
+    public function getBanks()
+    {
+        try {
+            return response()->json(['data' => $this->getPaystackBanks()]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Failed to fetch bank list.'], 500);
+        }
+    }
+
+    private function getPaystackBanks(): array
+    {
+        return Cache::remember('paystack_banks', now()->addHours(12), function () {
+            $response = Http::withToken(config('services.paystack.secret_key'))
+                ->get('https://api.paystack.co/bank');
+            if (! $response->successful()) {
+                throw new \Exception('Unable to fetch bank list.');
+            }
+            return $response->json()['data'];
+        });
+    }
+
+    public function resolveAccount(Request $request)
+    {
+        $request->validate([
+            'account_number' => 'required|digits:10',
+            'bank_code'      => 'required|string',
+        ]);
+
+        try {
+            $response = Http::withToken(config('services.paystack.secret_key'))
+                ->get('https://api.paystack.co/bank/resolve', [
+                    'account_number' => $request->account_number,
+                    'bank_code'      => $request->bank_code,
+                ]);
+
+            if (! $response->successful()) {
+                return response()->json(['error' => 'Verification failed.'], 400);
+            }
+
+            return response()->json($response->json());
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'An unexpected error occurred.'], 500);
+        }
+    }
+
+    public function getUserStats()
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
+
+            $landsOwned = DB::table('user_land')
+                ->where('user_id', $user->id)->where('units', '>', 0)
+                ->distinct('land_id')->count('land_id');
+
+            $unitsOwned = DB::table('user_land')
+                ->where('user_id', $user->id)->sum('units');
+
+            $investedData = DB::table('purchases')
+                ->select(DB::raw('SUM(total_amount_paid_kobo) as total_paid, SUM(total_amount_received_kobo) as total_received'))
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['completed', 'partially_sold'])
+                ->first();
+
+            $totalInvestedKobo = ($investedData->total_paid ?? 0) - ($investedData->total_received ?? 0);
+
+            $totalWithdrawn = DB::table('withdrawals')
+                ->where('user_id', $user->id)->where('status', 'completed')
+                ->sum('amount_kobo');
+
+            $pendingWithdrawals = DB::table('withdrawals')
+                ->where('user_id', $user->id)->where('status', 'pending')->count();
+
+            $totalRewardsClaimed = DB::table('referral_rewards')
+                ->where('user_id', $user->id)->where('claimed', true)
+                ->sum('amount_kobo');
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'lands_owned'                => $landsOwned,
+                    'units_owned'                => $unitsOwned,
+                    'total_invested'             => $totalInvestedKobo / 100,
+                    'total_invested_kobo'        => $totalInvestedKobo,
+                    'total_withdrawn'            => $totalWithdrawn / 100,
+                    'total_withdrawn_kobo'       => $totalWithdrawn,
+                    'pending_withdrawals'        => $pendingWithdrawals,
+                    'balance'                    => $user->balance_kobo / 100,
+                    'balance_kobo'               => $user->balance_kobo,
+                    'rewards_balance'            => $user->rewards_balance_kobo / 100,
+                    'rewards_balance_kobo'       => $user->rewards_balance_kobo,
+                    'total_spendable'            => $user->total_spendable_kobo / 100,
+                    'total_spendable_kobo'       => $user->total_spendable_kobo,
+                    'total_rewards_claimed'      => $totalRewardsClaimed / 100,
+                    'total_rewards_claimed_kobo' => $totalRewardsClaimed,
+                    'withdrawal_daily_limit'          => $this->dailyLimitKobo() / 100,
+                    'withdrawal_daily_used_kobo'      => $user->withdrawal_day === now()->toDateString()
+                        ? $user->withdrawal_daily_total_kobo : 0,
+                    'withdrawal_daily_remaining_kobo' => $this->dailyRemainingKobo($user),
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('getUserStats error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching stats.'], 500);
+        }
+    }
+
+    private function dailyLimitKobo(): int
+    {
+        return (int) config('services.withdrawals.daily_limit_kobo', 50_000_000);
+    }
+
+    private function dailyRemainingKobo($user): int
+    {
+        $used = $user->withdrawal_day === now()->toDateString()
+            ? $user->withdrawal_daily_total_kobo
+            : 0;
+        return max(0, $this->dailyLimitKobo() - $used);
+    }
+
+    public function getUserTransactions()
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
+
+            $deposits = Deposit::where('user_id', $user->id)
+                ->select('id', 'amount_kobo', 'transaction_fee', 'total_kobo', 'status', 'created_at')
+                ->get()->map(fn ($d) => [
+                    'type'            => 'Deposit',
+                    'amount'          => $d->amount_kobo / 100,
+                    'transaction_fee' => ($d->transaction_fee ?? 0) / 100,
+                    'total'           => ($d->total_kobo ?? $d->amount_kobo) / 100,
+                    'status'          => ucfirst($d->status),
+                    'date'            => $d->created_at->toIso8601String(),
+                ]);
+
+            $withdrawals = Withdrawal::where('user_id', $user->id)
+                ->select('id', 'amount_kobo', 'status', 'created_at')
+                ->get()->map(fn ($w) => [
+                    'type'   => 'Withdrawal',
+                    'amount' => $w->amount_kobo / 100,
+                    'status' => ucfirst($w->status),
+                    'date'   => $w->created_at->toIso8601String(),
+                ]);
+
+            $landTransactions = Transaction::where('user_id', $user->id)
+                ->select('id', 'land_id', 'type', 'units', 'amount_kobo', 'status', 'created_at')
+                ->with('land:id,title')
+                ->get()->map(fn ($t) => [
+                    'type'   => ucfirst($t->type),
+                    'land'   => $t->land->title ?? 'Unknown',
+                    'amount' => abs($t->amount_kobo) / 100,
+                    'units'  => abs($t->units),
+                    'status' => ucfirst($t->status),
+                    'date'   => $t->created_at->toIso8601String(),
+                ]);
+
+            $transactions = collect()
+                ->merge($deposits)->merge($withdrawals)->merge($landTransactions)
+                ->sortByDesc('date')->values();
+
+            return response()->json(['success' => true, 'data' => $transactions]);
+
+        } catch (\Exception $e) {
+            Log::error('getUserTransactions error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching transactions.'], 500);
+        }
+    }
+
+    public function getPortfolioSummary(Request $request)
+    {
+        try {
+            $user = JWTAuth::parseToken()->authenticate();
+            return response()->json(['success' => true, 'data' => PortfolioService::summary($user->id)]);
+        } catch (\Exception $e) {
+            Log::error('Portfolio summary error', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error fetching portfolio summary.'], 500);
+        }
+    }
 }

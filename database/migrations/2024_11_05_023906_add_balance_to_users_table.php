@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::table('users', function (Blueprint $table) {
             $table->decimal('balance', 15, 2)->default(0); // To store user balance
             $table->string('recipient_code')->nullable(); // Recipient code from Paystack
+            $table->string('bank_code')->nullable()->after('bank_name'); 
         });
     }
 
@@ -23,7 +24,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->dropColumn(['balance', 'recipient_code']);
+            $table->dropColumn(['balance', 'recipient_code','bank_code']);
         });
     }
 };

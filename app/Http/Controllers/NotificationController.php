@@ -3,35 +3,59 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 
 class NotificationController extends Controller
 {
-    // Get all notifications for the authenticated user
-    public function getNotifications(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $notifications = $request->user()
+            ->notifications()
+            ->latest()
+            ->paginate(20);
+
         return response()->json([
-            'notifications' => $user->notifications
+            'success'       => true,
+            'notifications' => $notifications,
         ]);
     }
 
-    // Get only unread notifications
-    public function getUnreadNotifications(Request $request)
+    public function unread(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $unread = $request->user()
+            ->unreadNotifications()
+            ->latest()
+            ->get();
+
         return response()->json([
-            'unread_notifications' => $user->unreadNotifications
+            'success'              => true,
+            'unread_notifications' => $unread,
         ]);
     }
 
-    // Mark all notifications as read
-    public function markAllAsRead(Request $request)
+    public function markAllRead(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $user->unreadNotifications->markAsRead();
+        $request->user()->unreadNotifications->markAsRead();
 
         return response()->json([
-            'message' => 'All notifications marked as read'
+            'success' => true,
+            'message' => 'All notifications marked as read.',
+        ]);
+    }
+
+    public function markRead(Request $request, $id): JsonResponse
+    {
+        $notification = $request->user()->notifications()->find($id);
+
+        if (!$notification) {
+            return response()->json(['success' => false, 'message' => 'Notification not found.'], 404);
+        }
+
+        $notification->markAsRead();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Notification marked as read.',
         ]);
     }
 }
