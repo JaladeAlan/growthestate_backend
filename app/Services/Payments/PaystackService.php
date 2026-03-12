@@ -16,4 +16,20 @@ class PaystackService
                 'callback_url' => $callbackUrl,
             ]);
     }
+    
+    public static function getBanks(): array
+    {
+        $response = Http::withToken(config('services.paystack.secret_key'))
+            ->get('https://api.paystack.co/bank', [
+                'country'  => 'nigeria',
+                'per_page' => 100,
+                'use_cursor' => false,
+            ]);
+
+        if (! $response->successful()) {
+            throw new \Exception('Paystack bank list request failed: ' . $response->body());
+        }
+
+        return $response->json();
+    }
 }

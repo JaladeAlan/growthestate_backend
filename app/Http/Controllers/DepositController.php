@@ -118,4 +118,21 @@ class DepositController extends Controller
             'amount'    => $deposit->amount_kobo / 100,
         ]);
     }
+
+    public function banks()
+    {
+        try {
+            $banks = PaystackService::getBanks();
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch banks', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json(['error' => 'Could not fetch banks. Please try again.'], 502);
+        }
+
+        return response()->json([
+            'banks' => $banks['data'] ?? [],
+        ]);
+    }
 }
