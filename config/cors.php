@@ -34,9 +34,9 @@ return [
                 'https://app.sproutvest.com',
 
                 // ── Staging / preview ─────────────────────────────────────
+                'https://sproutvest-six.vercel.app',
                 'https://sproutapp-eta.vercel.app',
                 'https://growthfrontends.vercel.app',
-                'https://react-iota-taupe.vercel.app',
             
                 // ── Local development ─────────────────────────────────────
                 'http://localhost:3000',
