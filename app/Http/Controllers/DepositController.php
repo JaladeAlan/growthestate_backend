@@ -138,4 +138,33 @@ class DepositController extends Controller
             'banks' => $banks['data'] ?? [],
         ]);
     }
+
+    public function resolveAccount(Request $request)
+    {
+        $request->validate([
+            'account_number' => 'required|string|digits:10',
+            'bank_code'      => 'required|string',
+        ]);
+
+        try {
+            $result = PaystackService::resolveAccount(
+                $request->account_number,
+                $request->bank_code
+            );
+        } catch (\Exception $e) {
+            Log::error('Account resolution failed', [
+                'account_number' => $request->account_number,
+                'bank_code'      => $request->bank_code,
+                'error'          => $e->getMessage(),
+            ]);
+
+            return response()->json(['error' => 'Could not resolve account. Please try again.'], 502);
+        }
+
+        return response()->json([
+            'account_name'   => $result['data']['account_name'] ?? null,
+            'account_number' => $result['data']['account_number'] ?? null,
+            'bank_id'        => $result['data']['bank_id'] ?? null,
+        ]);
+    }
 }
