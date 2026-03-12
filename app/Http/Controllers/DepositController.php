@@ -8,6 +8,7 @@ use App\Services\Payments\MonnifyService;
 use App\Services\Payments\PaystackService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class DepositController extends Controller
 {
@@ -119,10 +120,12 @@ class DepositController extends Controller
         ]);
     }
 
-    public function banks()
+   public function banks()
     {
         try {
-            $banks = PaystackService::getBanks();
+            $banks = Cache::remember('paystack_banks', now()->addHours(6), function () {
+                return PaystackService::getBanks();
+            });
         } catch (\Exception $e) {
             Log::error('Failed to fetch banks', [
                 'error' => $e->getMessage(),
