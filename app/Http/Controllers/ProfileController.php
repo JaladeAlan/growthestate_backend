@@ -69,6 +69,7 @@ class ProfileController extends Controller
     {
         $request->validate([
             'bank_code'      => 'required|string|max:10',
+            'bank_name'      => 'nullable|string|max:100',
             'account_number' => 'required|digits:10',
         ]);
 
@@ -109,6 +110,7 @@ class ProfileController extends Controller
 
         $user->update([
             'bank_code'      => $request->bank_code,
+            'bank_name'      => $recipient->json('data.details.bank_name') ?? $request->bank_name,
             'account_number' => $request->account_number,
             'account_name'   => $accountName,
             'recipient_code' => $recipient->json('data.recipient_code'),
