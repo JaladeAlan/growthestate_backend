@@ -367,7 +367,7 @@ class AuthController extends Controller
         return $this->sendSuccessResponse([], 'Email verified successfully.');
     }
 
-    public function resendVerificationEmail(Request $request)
+    public function resendVerification(Request $request)
     {
         $request->validate(['email' => 'required|string|email']);
 
