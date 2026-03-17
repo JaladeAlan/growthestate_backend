@@ -4,7 +4,7 @@ WORKDIR /var/www/html
 ENV HOME=/var/www/html
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl zip unzip \
+    git curl zip unzip supervisor \
     libpng-dev libonig-dev libxml2-dev libzip-dev libpq-dev \
     postgresql-client \
     && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd zip \
@@ -17,6 +17,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 COPY . .
 COPY entrypoint.sh /entrypoint.sh
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 RUN composer install --optimize-autoloader --no-dev \
     && mkdir -p storage/app/public/seed/lands \
