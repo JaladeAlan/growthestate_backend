@@ -36,7 +36,7 @@ class ReferralController extends Controller
             'success' => true,
             'data'    => [
                 'referral_code'          => $user->referral_code,
-                'referral_link'          => "{$this->frontendUrl}/register?ref={$user->referral_code}",
+                'referral_link'          => "{$this->frontendUrl}/ref={$user->referral_code}",
                 'total_referrals'        => $referrals->count(),
                 'completed_referrals'    => $referrals->where('status', 'completed')->count(),
                 'pending_referrals'      => $referrals->where('status', 'pending')->count(),
