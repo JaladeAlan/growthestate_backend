@@ -1,1 +1,118 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: growth-estate-app
+    container_name: laravel-app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - db
+      - redis
+    networks:
+      - laravel
+  
+  webserver:
+    image: nginx:alpine
+    container_name: nginx-server
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./:/var/www/html
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      - app
+    networks:
+      - laravel
+
+  scheduler:
+    image: growth-estate-app
+    container_name: laravel-scheduler
+    restart: unless-stopped
+    working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    command: php artisan schedule:work
+    depends_on:
+      - db
+      - redis
+    networks:
+      - laravel
+
+  queue:
+    image: growth-estate-app
+    container_name: laravel-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    environment:
+      HOME: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=90
+    depends_on:
+      - db
+      - redis
+    networks:
+      - laravel
+
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: growthpoles
+      POSTGRES_USER: laravel
+      POSTGRES_PASSWORD: laravel
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - laravel
+
+  redis:
+    image: redis:7-alpine
+    container_name: growth-estate-redis
+    restart: unless-stopped
+    networks:
+      - laravel
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    depends_on:
+      - db
+    networks:
+      - laravel
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - laravel
+
+networks:
+  laravel:
+    driver: bridge
+
+volumes:
+  pgdata:
 
