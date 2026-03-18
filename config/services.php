@@ -49,4 +49,16 @@ return [
     'base_url'      => env('MONNIFY_BASE_URL', 'https://sandbox.monnify.com'),
 ],
 
+    'opay' => [
+        'merchant_id' => env('OPAY_MERCHANT_ID'),
+        'public_key'  => env('OPAY_PUBLIC_KEY'),
+        'secret_key'  => env('OPAY_SECRET_KEY'),
+
+        /*
+        * Sandbox : https://sandboxapi.opayweb.com
+        * Live    : https://cashierapi.opayweb.com
+        */
+        'base_url'    => env('OPAY_BASE_URL', 'https://sandboxapi.opayweb.com'),
+    ],
+
 ];

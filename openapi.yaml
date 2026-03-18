@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: Growth Estate API
-  version: 1.0.0
+  version: 2.0.0
   description: >
-    Enterprise-grade OpenAPI 3.1 specification for the Growth Estate application.
-    Includes authentication (JWT), email verification, password reset, lands, purchases,
-    deposits, withdrawals, Paystack webhook, bank resolution, notifications, and PIN flows.
+    Enterprise-grade OpenAPI 3.1 specification for the Growth Estate / Sproutvest application.
+    Covers authentication (JWT), email verification, password reset, KYC, lands, purchases,
+    deposits (Paystack · Monnify · OPay), withdrawals, webhooks, bank resolution,
+    notifications, transaction PIN, referrals, portfolio, support tickets, and admin routes.
 
 servers:
   - url: https://growth-estate.onrender.com/api
@@ -18,29 +19,53 @@ security:
 
 tags:
   - name: Auth
-    description: Authentication and user sessions
+    description: Registration, login, token refresh, logout, password change
   - name: Email Verification
-    description: Email verification flows
+    description: Code-based email verification
   - name: Password Reset
-    description: Password reset flows
+    description: Code-based password reset
+  - name: Profile
+    description: Authenticated user profile and account status
+  - name: KYC
+    description: Know-Your-Customer submission and admin review
   - name: Lands
-    description: Land listings and admin actions
+    description: Land listings (public and protected)
   - name: Purchase
-    description: Purchase and sell units
+    description: Buy and sell land units
+  - name: Portfolio
+    description: Portfolio summary, chart, performance and allocation
   - name: Deposits
-    description: Deposit initiation and callbacks
+    description: Deposit initiation and status
   - name: Withdrawals
-    description: Withdrawals & Paystack transfers
+    description: Withdrawal requests and status
   - name: Banks
-    description: Bank lists and account resolution
+    description: Bank list and account resolution (Paystack)
   - name: Notifications
-    description: User notification endpoints
+    description: In-app notification endpoints
   - name: PIN
-    description: Transaction PIN flows
+    description: Transaction PIN set, update and reset
+  - name: Referrals
+    description: Referral dashboard and reward claiming
+  - name: Support
+    description: AI chat, support tickets, and FAQs
+  - name: Admin – Lands
+    description: Admin land management
+  - name: Admin – Users
+    description: Admin user management
+  - name: Admin – KYC
+    description: Admin KYC review
+  - name: Admin – Support
+    description: Admin support ticket management
+  - name: Admin – Referrals
+    description: Admin referral overview
   - name: Webhooks
-    description: Paystack webhook endpoints
+    description: Payment gateway webhook endpoints (public)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────────────────────
 components:
+
   securitySchemes:
     bearerAuth:
       type: http
@@ -61,74 +86,211 @@ components:
       required: true
       schema:
         type: string
-      description: Transaction/withdrawal/deposit reference.
+      description: Transaction / withdrawal / deposit reference
+    ticketParam:
+      name: ticket
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: Support ticket ID
+    notificationId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Notification UUID
+    userId:
+      name: user
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: User ID
+    kycId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: KYC verification record ID
 
   schemas:
+
+    # ── Generic ──────────────────────────────────────────────────────────────
 
     ErrorResponse:
       type: object
       properties:
-        error:
+        message:
           type: string
-        details:
+        errors:
           type: object
           nullable: true
 
     ApiResponse:
       type: object
       properties:
-        status:
-          type: string
+        success:
+          type: boolean
         message:
           type: string
         data:
-          type: object
           nullable: true
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
 
     AuthResponse:
       type: object
       properties:
-        access_token:
+        message:
           type: string
-        token_type:
-          type: string
-          example: Bearer
-        expires_in:
-          type: integer
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+            user:
+              $ref: '#/components/schemas/User'
+
+    # ── User ─────────────────────────────────────────────────────────────────
 
     User:
       type: object
       properties:
         id:
           type: integer
+        uid:
+          type: string
+          example: USR-AB12CD
         name:
           type: string
         email:
           type: string
           format: email
-        phone:
+        email_verified_at:
           type: string
-        account_number:
+          format: date-time
+          nullable: true
+        is_admin:
+          type: boolean
+        is_suspended:
+          type: boolean
+        balance_kobo:
+          type: integer
+          description: Main wallet balance in kobo
+        rewards_balance_kobo:
+          type: integer
+        total_spendable_kobo:
+          type: integer
+        bank_name:
           type: string
           nullable: true
         bank_code:
           type: string
           nullable: true
+        account_number:
+          type: string
+          nullable: true
+        account_name:
+          type: string
+          nullable: true
         recipient_code:
           type: string
           nullable: true
-        balance:
-          type: number
-          format: float
-        is_admin:
+        bank_verified:
           type: boolean
-        email_verified_at:
+        referral_code:
+          type: string
+          nullable: true
+        pin_is_set:
+          type: boolean
+        is_kyc_verified:
+          type: boolean
+        kyc_status:
+          type: string
+          enum: [none, not_submitted, pending, approved, rejected, resubmit]
+        created_at:
+          type: string
+          format: date-time
+
+    # ── KYC ──────────────────────────────────────────────────────────────────
+
+    KycVerification:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        full_name:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        phone_number:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        country:
+          type: string
+        id_type:
+          type: string
+          enum: [nin, drivers_license, voters_card, passport, bvn]
+        id_number:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected, resubmit]
+        rejection_reason:
+          type: string
+          nullable: true
+        verified_at:
           type: string
           format: date-time
           nullable: true
         created_at:
           type: string
           format: date-time
+
+    # ── Land ─────────────────────────────────────────────────────────────────
+
+    LandImage:
+      type: object
+      properties:
+        id:
+          type: integer
+        land_id:
+          type: integer
+        image_url:
+          type: string
+          format: uri
+
+    LandPrice:
+      type: object
+      properties:
+        price_per_unit_kobo:
+          type: integer
+        price_date:
+          type: string
+          format: date
 
     Land:
       type: object
@@ -141,43 +303,105 @@ components:
           type: string
         size:
           type: number
-        price_per_unit:
-          type: number
         total_units:
           type: integer
         available_units:
           type: integer
+        units_sold:
+          type: integer
+        sold_percentage:
+          type: number
         is_available:
           type: boolean
         description:
           type: string
           nullable: true
+        lat:
+          type: number
+          nullable: true
+        lng:
+          type: number
+          nullable: true
+        map_color:
+          type: string
+          enum: [green, yellow, orange, red]
+        current_price_per_unit_kobo:
+          type: integer
         images:
           type: array
           items:
-            type: string
-            description: Public URL to image
+            $ref: '#/components/schemas/LandImage'
+        latest_price:
+          $ref: '#/components/schemas/LandPrice'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
 
     LandList:
       type: array
       items:
         $ref: '#/components/schemas/Land'
 
+    # ── Purchases ────────────────────────────────────────────────────────────
+
     PurchaseRequest:
       type: object
+      required: [units]
       properties:
         units:
           type: integer
           minimum: 1
-      required: [units]
+        use_rewards:
+          type: boolean
+          default: true
+          description: Apply rewards balance / discount at checkout
 
     SellRequest:
       type: object
+      required: [units]
       properties:
         units:
           type: integer
           minimum: 1
-      required: [units]
+
+    PurchaseResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        reference:
+          type: string
+        original_cost_kobo:
+          type: integer
+        discount_applied_kobo:
+          type: integer
+        discount_percent:
+          type: number
+        paid_from_rewards_kobo:
+          type: integer
+        paid_from_wallet_kobo:
+          type: integer
+        total_paid_kobo:
+          type: integer
+        remaining_units:
+          type: integer
+
+    SellResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        reference:
+          type: string
+        amount_received_kobo:
+          type: integer
+        amount_received_naira:
+          type: number
+        available_units:
+          type: integer
+
+    # ── Transactions ─────────────────────────────────────────────────────────
 
     Transaction:
       type: object
@@ -188,27 +412,56 @@ components:
           type: integer
         land_id:
           type: integer
+        type:
+          type: string
+          enum: [purchase, sale]
         units:
           type: integer
-        price:
-          type: number
+        amount_kobo:
+          type: integer
         status:
           type: string
         reference:
           type: string
+        transaction_date:
+          type: string
+          format: date-time
         created_at:
           type: string
           format: date-time
 
-    PurchaseSummary:
+    # ── Deposits ─────────────────────────────────────────────────────────────
+
+    DepositInitRequest:
+      type: object
+      required: [amount, gateway]
+      properties:
+        amount:
+          type: integer
+          minimum: 100000
+          maximum: 1000000000
+          description: Amount in kobo (e.g. 100000 = ₦1,000)
+        gateway:
+          type: string
+          enum: [paystack, monnify, opay]
+
+    DepositInitResponse:
       type: object
       properties:
+        payment_url:
+          type: string
+          format: uri
         reference:
           type: string
-        amount_paid:
+        gateway:
+          type: string
+          enum: [paystack, monnify, opay]
+        transaction_fee:
           type: number
-        units:
-          type: integer
+          description: Fee in Naira
+        total_amount:
+          type: number
+          description: Total charged in Naira (principal + fee)
 
     Deposit:
       type: object
@@ -219,13 +472,40 @@ components:
           type: integer
         reference:
           type: string
-        amount:
-          type: number
+        gateway:
+          type: string
+          enum: [paystack, monnify, opay]
+        amount_kobo:
+          type: integer
+        transaction_fee:
+          type: integer
+        total_kobo:
+          type: integer
         status:
           type: string
+          enum: [pending, completed, failed]
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
         created_at:
           type: string
           format: date-time
+
+    # ── Withdrawals ──────────────────────────────────────────────────────────
+
+    WithdrawalRequest:
+      type: object
+      required: [amount, transaction_pin]
+      properties:
+        amount:
+          type: integer
+          minimum: 500000
+          description: Amount in kobo (minimum ₦5,000)
+        transaction_pin:
+          type: string
+          minLength: 4
+          maxLength: 4
 
     Withdrawal:
       type: object
@@ -234,18 +514,21 @@ components:
           type: integer
         user_id:
           type: integer
-        amount:
-          type: number
-        status:
-          type: string
         reference:
           type: string
+        amount_kobo:
+          type: integer
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    # ── Banks ────────────────────────────────────────────────────────────────
 
     Bank:
       type: object
@@ -255,31 +538,51 @@ components:
         code:
           type: string
 
-    BankList:
-      type: array
-      items:
-        $ref: '#/components/schemas/Bank'
-
     ResolveAccountRequest:
       type: object
+      required: [account_number, bank_code]
       properties:
         account_number:
           type: string
+          minLength: 10
+          maxLength: 10
         bank_code:
           type: string
-      required: [account_number, bank_code]
 
     ResolveAccountResponse:
       type: object
       properties:
         account_name:
           type: string
+        account_number:
+          type: string
+        bank_id:
+          type: integer
+          nullable: true
+
+    BankDetailsRequest:
+      type: object
+      required: [account_number, bank_code]
+      properties:
+        account_number:
+          type: string
+          minLength: 10
+          maxLength: 10
+        bank_code:
+          type: string
+          maxLength: 10
+        bank_name:
+          type: string
+          nullable: true
+
+    # ── Notifications ────────────────────────────────────────────────────────
 
     Notification:
       type: object
       properties:
         id:
           type: string
+          format: uuid
         type:
           type: string
         data:
@@ -292,98 +595,281 @@ components:
           type: string
           format: date-time
 
-    PinForgotRequest:
-      type: object
-      properties:
-        email:
-          type: string
-      required: [email]
+    # ── PIN ──────────────────────────────────────────────────────────────────
 
-    PinVerifyRequest:
+    PinSetRequest:
       type: object
+      required: [pin, pin_confirmation]
       properties:
-        email:
+        pin:
           type: string
-        code:
+          minLength: 4
+          maxLength: 4
+        pin_confirmation:
           type: string
-      required: [email, code]
+
+    PinUpdateRequest:
+      type: object
+      required: [current_pin, new_pin, pin_confirmation]
+      properties:
+        current_pin:
+          type: string
+          minLength: 4
+          maxLength: 4
+        new_pin:
+          type: string
+          minLength: 4
+          maxLength: 4
+        pin_confirmation:
+          type: string
 
     PinResetRequest:
       type: object
+      required: [reset_token, new_pin, pin_confirmation]
       properties:
-        email:
-          type: string
-        code:
+        reset_token:
           type: string
         new_pin:
           type: string
-      required: [email, code, new_pin]
+          minLength: 4
+          maxLength: 4
+        pin_confirmation:
+          type: string
 
-    ChangePasswordRequest:
+    # ── Portfolio ────────────────────────────────────────────────────────────
+
+    PortfolioSummary:
       type: object
       properties:
-        old_password:
-          type: string
-        new_password:
-          type: string
-      required: [old_password, new_password]
+        current_portfolio_value_kobo:
+          type: integer
+        current_portfolio_value_naira:
+          type: number
+        total_profit_loss_kobo:
+          type: integer
+        total_profit_loss_naira:
+          type: number
+        profit_loss_percent:
+          type: number
 
-    PaystackWebhookSchema:
+    # ── Referrals ────────────────────────────────────────────────────────────
+
+    Referral:
+      type: object
+      properties:
+        id:
+          type: integer
+        referrer_id:
+          type: integer
+        referred_user_id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, completed]
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ReferralReward:
+      type: object
+      properties:
+        id:
+          type: integer
+        referral_id:
+          type: integer
+        user_id:
+          type: integer
+        reward_type:
+          type: string
+          enum: [cashback, discount, bonus_units]
+        amount_kobo:
+          type: integer
+          nullable: true
+        discount_percentage:
+          type: number
+          nullable: true
+        claimed:
+          type: boolean
+        claimed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Support ──────────────────────────────────────────────────────────────
+
+    SupportMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        ticket_id:
+          type: integer
+        sender_type:
+          type: string
+          enum: [user, admin, guest]
+        sender_id:
+          type: integer
+          nullable: true
+        body:
+          type: string
+        attachment_path:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SupportTicket:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+          nullable: true
+        guest_name:
+          type: string
+          nullable: true
+        guest_email:
+          type: string
+          nullable: true
+        reference:
+          type: string
+          example: TKT-ABCD1234
+        subject:
+          type: string
+        category:
+          type: string
+          enum: [account, payment, kyc, investment, withdrawal, other]
+        status:
+          type: string
+          enum: [open, waiting, closed, resolved]
+        priority:
+          type: string
+          enum: [low, normal, high]
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportMessage'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Webhooks ─────────────────────────────────────────────────────────────
+
+    PaystackWebhookPayload:
       type: object
       properties:
         event:
           type: string
+          example: charge.success
         data:
           type: object
 
+    MonnifyWebhookPayload:
+      type: object
+      properties:
+        eventType:
+          type: string
+          example: SUCCESSFUL_TRANSACTION
+        eventData:
+          type: object
+
+    OpayWebhookPayload:
+      type: object
+      properties:
+        type:
+          type: string
+          example: payment.success
+        data:
+          type: object
+          properties:
+            reference:
+              type: string
+            status:
+              type: string
+              enum: [SUCCESS, PENDING, FAIL]
+            amount:
+              type: number
+              description: Amount in NGN
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
 paths:
 
   ################################################################
-  # AUTH — registration, login, profile, refresh, logout
+  # AUTH
   ################################################################
 
   /register:
     post:
       tags: [Auth]
       summary: Register a new user
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [name, email, password, password_confirmation]
               properties:
                 name:
                   type: string
+                  maxLength: 255
                 email:
                   type: string
+                  format: email
                 password:
                   type: string
-                phone:
+                  minLength: 8
+                  description: Must include uppercase, lowercase, number, and special char
+                password_confirmation:
                   type: string
+                referral_code:
+                  type: string
+                  nullable: true
       responses:
         "201":
-          description: Registered successfully
+          description: Registration successful
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponse'
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/AuthResponse'
+        "422":
+          description: Validation errors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /login:
     post:
       tags: [Auth]
       summary: Login and receive JWT token
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email, password]
               properties:
                 email:
                   type: string
+                  format: email
                 password:
                   type: string
       responses:
@@ -394,23 +880,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthResponse'
         "401":
-          $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid credentials
+        "403":
+          description: Email not verified
+        "404":
+          description: User not found
 
   /me:
     get:
-      tags: [Auth]
-      summary: Get authenticated user details
+      tags: [Auth, Profile]
+      summary: Get authenticated user profile
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: User details
+          description: User profile
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/User'
         "401":
-          $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthenticated
 
   /refresh:
     post:
@@ -429,12 +924,41 @@ paths:
   /logout:
     post:
       tags: [Auth]
-      summary: Log out user (invalidate token)
+      summary: Invalidate JWT token
       security:
         - bearerAuth: []
       responses:
         "200":
           description: Logged out
+
+  /user/change-password:
+    post:
+      tags: [Auth]
+      summary: Change password for authenticated user
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password, new_password_confirmation]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+                new_password_confirmation:
+                  type: string
+      responses:
+        "200":
+          description: Password changed
+        "400":
+          description: Current password incorrect or same as new
+        "422":
+          description: Validation errors
 
   ################################################################
   # EMAIL VERIFICATION
@@ -443,191 +967,577 @@ paths:
   /email/verify/code:
     post:
       tags: [Email Verification]
-      summary: Verify a user's email using a code
+      summary: Verify email with 6-digit code
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email, verification_code]
               properties:
                 email:
                   type: string
-                code:
+                  format: email
+                verification_code:
                   type: string
+                  minLength: 6
+                  maxLength: 6
       responses:
         "200":
           description: Email verified
+        "400":
+          description: Invalid or expired code
+        "404":
+          description: User not found
 
   /email/resend-verification:
     post:
       tags: [Email Verification]
-      summary: Resend email verification
+      summary: Resend email verification code
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email]
               properties:
                 email:
                   type: string
+                  format: email
       responses:
         "200":
-          description: Verification email resent
+          description: Verification code resent
+        "400":
+          description: Email already verified
+        "404":
+          description: User not found
 
   ################################################################
-  # PASSWORD RESET (code-based)
+  # PASSWORD RESET
   ################################################################
 
   /password/reset/code:
     post:
       tags: [Password Reset]
-      summary: Send a password reset code to the user's email
+      summary: Send password reset code to email
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email]
               properties:
                 email:
                   type: string
+                  format: email
       responses:
         "200":
-          description: Reset code sent
+          description: Reset code sent (response is identical whether email exists or not)
 
   /password/reset/verify:
     post:
       tags: [Password Reset]
-      summary: Verify reset code
+      summary: Verify password reset code
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email, reset_code]
               properties:
                 email:
                   type: string
-                code:
+                  format: email
+                reset_code:
                   type: string
+                  minLength: 6
+                  maxLength: 6
       responses:
         "200":
-          description: Reset code verified
+          description: Code verified
+        "400":
+          description: Invalid or expired code
 
   /password/reset:
     post:
       tags: [Password Reset]
-      summary: Reset password using code
+      summary: Reset password using verified code
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email, reset_code, password, password_confirmation]
               properties:
                 email:
                   type: string
-                code:
+                  format: email
+                reset_code:
                   type: string
-                new_password:
+                  minLength: 6
+                  maxLength: 6
+                password:
+                  type: string
+                  minLength: 8
+                password_confirmation:
                   type: string
       responses:
         "200":
           description: Password reset successful
+        "400":
+          description: Invalid or expired code
+        "422":
+          description: Validation errors
 
   ################################################################
-  # LANDS (public and protected)
+  # PROFILE
+  ################################################################
+
+  /user/account-status:
+    get:
+      tags: [Profile]
+      summary: Get account status (PIN, KYC, blocking reasons)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      pin_is_set:
+                        type: boolean
+                      is_kyc_verified:
+                        type: boolean
+                      kyc_status:
+                        type: string
+                      can_transact:
+                        type: boolean
+                      blocking_reasons:
+                        type: array
+                        items:
+                          type: string
+
+  /user/bank-details:
+    put:
+      tags: [Profile, Banks]
+      summary: Update bank details (resolves account via Paystack)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BankDetailsRequest'
+      responses:
+        "200":
+          description: Bank details updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  account_name:
+                    type: string
+        "422":
+          description: Could not verify account
+
+  /user/stats:
+    get:
+      tags: [Profile]
+      summary: Get user statistics and portfolio overview
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      balance_kobo:
+                        type: integer
+                      total_invested_kobo:
+                        type: integer
+                      total_received_kobo:
+                        type: integer
+                      current_portfolio_value_kobo:
+                        type: integer
+                      current_portfolio_value_naira:
+                        type: number
+                      total_profit_loss_kobo:
+                        type: integer
+                      total_profit_loss_naira:
+                        type: number
+                      profit_loss_percent:
+                        type: number
+                      units_owned:
+                        type: integer
+                      lands_owned:
+                        type: integer
+                      total_withdrawn_kobo:
+                        type: integer
+                      pending_withdrawals:
+                        type: integer
+                      pin_is_set:
+                        type: boolean
+                      is_kyc_verified:
+                        type: boolean
+                      kyc_status:
+                        type: string
+
+  /user/lands:
+    get:
+      tags: [Profile]
+      summary: Get all lands and units owned by authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User land holdings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        land_id:
+                          type: integer
+                        units:
+                          type: integer
+                        total_amount_paid_kobo:
+                          type: integer
+                        purchase_date:
+                          type: string
+                          format: date-time
+                        land:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            title:
+                              type: string
+                            location:
+                              type: string
+                            size:
+                              type: number
+
+  /transactions/user:
+    get:
+      tags: [Profile]
+      summary: Get all transactions for authenticated user (deposits, withdrawals, land transactions)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Transaction list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        amount:
+                          type: number
+                        status:
+                          type: string
+                        date:
+                          type: string
+                          format: date-time
+
+  ################################################################
+  # KYC
+  ################################################################
+
+  /kyc/status:
+    get:
+      tags: [KYC]
+      summary: Get own KYC status
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: KYC status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [not_submitted, pending, approved, rejected, resubmit]
+                      is_verified:
+                        type: boolean
+                      submission_date:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      verified_at:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      rejection_reason:
+                        type: string
+                        nullable: true
+
+  /kyc/submit:
+    post:
+      tags: [KYC]
+      summary: Submit KYC documents
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [full_name, date_of_birth, phone_number, address, city, state, id_type, id_number, id_front, selfie]
+              properties:
+                full_name:
+                  type: string
+                date_of_birth:
+                  type: string
+                  format: date
+                phone_number:
+                  type: string
+                address:
+                  type: string
+                city:
+                  type: string
+                state:
+                  type: string
+                country:
+                  type: string
+                id_type:
+                  type: string
+                  enum: [nin, drivers_license, voters_card, passport, bvn]
+                id_number:
+                  type: string
+                id_front:
+                  type: string
+                  format: binary
+                id_back:
+                  type: string
+                  format: binary
+                  nullable: true
+                selfie:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: KYC submitted successfully
+        "400":
+          description: Already verified or pending
+
+  /kyc/{id}/image/{imageType}:
+    get:
+      tags: [KYC]
+      summary: Stream a KYC image (owner or admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/kycId'
+        - name: imageType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [id_front, id_back, selfie]
+      responses:
+        "200":
+          description: Image stream
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Record or file not found
+        "429":
+          description: Rate limit exceeded
+
+  ################################################################
+  # LANDS — PUBLIC & PROTECTED
   ################################################################
 
   /land:
     get:
       tags: [Lands]
-      summary: Public listing of available lands
+      summary: Public listing of available lands (cached 5 min)
+      security: []
       responses:
         "200":
           description: Public land list
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LandList'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/LandList'
 
   /lands:
     get:
       tags: [Lands]
-      summary: Get all lands (protected)
+      summary: All lands — authenticated (cached 5 min)
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: Land list (protected)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LandList'
-
-    post:
-      tags: [Lands]
-      summary: Create a new land (admin)
-      security:
-        - bearerAuth: []
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                title:
-                  type: string
-                location:
-                  type: string
-                size:
-                  type: number
-                price_per_unit:
-                  type: number
-                total_units:
-                  type: integer
-                description:
-                  type: string
-                images:
-                  type: array
-                  items:
-                    type: string
-                    format: binary
-      responses:
-        "201":
-          description: Land created
+          description: Full land list
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  message:
-                    type: string
-                  land:
-                    $ref: '#/components/schemas/Land'
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/LandList'
+
+  /lands/map:
+    get:
+      tags: [Lands]
+      summary: Bounding-box filtered land map data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: min_lng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: min_lat
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: max_lng
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: max_lat
+          in: query
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Lands within bounding box
+        "422":
+          description: Invalid bounding box
 
   /lands/{id}:
     get:
       tags: [Lands]
-      summary: Get specific land
+      summary: Get a single land with price history
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/landId'
       responses:
         "200":
-          description: Land retrieved
+          description: Land detail
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Land'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Land'
         "404":
-          $ref: '#/components/schemas/ErrorResponse'
+          description: Land not found
+
+  /lands/{id}/units:
+    get:
+      tags: [Lands]
+      summary: Get unit summary for a land
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      responses:
+        "200":
+          description: Unit summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      total_units:
+                        type: integer
+                      available_units:
+                        type: integer
+                      sold_units:
+                        type: integer
+
+  ################################################################
+  # PURCHASE & SELL
+  ################################################################
 
   /lands/{id}/purchase:
     post:
       tags: [Purchase]
-      description: Purchase units of land. Requires JWT + verified email and transaction PIN middleware.
+      summary: Purchase units of a land
+      description: Requires JWT, verified email, and transaction PIN middleware.
       security:
         - bearerAuth: []
       parameters:
@@ -644,16 +1554,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PurchaseSummary'
+                $ref: '#/components/schemas/PurchaseResponse'
         "400":
-          $ref: '#/components/schemas/ErrorResponse'
-        "403":
-          description: Unauthorized / PIN missing
+          description: Insufficient units or wallet balance
+        "422":
+          description: Validation error
 
   /lands/{id}/sell:
     post:
       tags: [Purchase]
-      description: Sell units back. Requires JWT + verified email and transaction PIN middleware.
+      summary: Sell units of a land back
+      description: Requires JWT, verified email, and transaction PIN middleware.
       security:
         - bearerAuth: []
       parameters:
@@ -670,181 +1581,83 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PurchaseSummary'
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/SellResponse'
+        "422":
+          description: Not enough units to sell
 
-  /lands/{id}/units:
+  ################################################################
+  # PORTFOLIO
+  ################################################################
+
+  /portfolio/summary:
     get:
-      tags: [Lands]
-      summary: Get units owned by authenticated user for specific land
+      tags: [Portfolio]
+      summary: Portfolio value, profit/loss and ROI
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Portfolio summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/PortfolioSummary'
+
+  /portfolio/chart:
+    get:
+      tags: [Portfolio]
+      summary: Historical portfolio value snapshots
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            enum: [7, 14, 30, 90, 180, 365]
+            default: 30
+      responses:
+        "200":
+          description: Daily snapshots
+
+  /portfolio/performance:
+    get:
+      tags: [Portfolio]
+      summary: Annualised return and overall performance metrics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Performance data
+
+  /portfolio/allocation:
+    get:
+      tags: [Portfolio]
+      summary: Per-land portfolio allocation breakdown
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Allocation breakdown
+
+  /portfolio/asset/{id}:
+    get:
+      tags: [Portfolio]
+      summary: Detailed performance for a single land asset
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/landId'
       responses:
         "200":
-          description: Units owned
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  land_id:
-                    type: integer
-                  units_owned:
-                    type: integer
-
-  ################################################################
-  # USER / TRANSACTIONS / STATS
-  ################################################################
-
-  /user/lands:
-    get:
-      tags: [User]
-      summary: Get all lands and units owned by user
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Owned lands
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  owned_lands:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        land_id:
-                          type: integer
-                        land_name:
-                          type: string
-                        units_owned:
-                          type: integer
-
-  /user/stats:
-    get:
-      tags: [User]
-      summary: Get user stats (custom metrics)
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Stats returned
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  total_invested:
-                    type: number
-                  total_units:
-                    type: integer
-
-  /transactions/user:
-    get:
-      tags: [User]
-      summary: Get user transactions
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Transactions
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Transaction'
-
-  ################################################################
-  # TRANSACTION PIN
-  ################################################################
-
-  /pin/forgot:
-    post:
-      tags: [PIN]
-      summary: Send PIN reset code to user's email
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PinForgotRequest'
-      responses:
-        "200":
-          description: Code sent
-
-  /pin/verify-code:
-    post:
-      tags: [PIN]
-      summary: Verify PIN reset code
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PinVerifyRequest'
-      responses:
-        "200":
-          description: Code verified
-
-  /pin/reset:
-    post:
-      tags: [PIN]
-      summary: Reset transaction PIN
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PinResetRequest'
-      responses:
-        "200":
-          description: PIN updated
-
-  /pin/set:
-    post:
-      tags: [PIN]
-      summary: Set transaction PIN
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                pin:
-                  type: string
-      responses:
-        "200":
-          description: PIN set
-
-  /pin/update:
-    post:
-      tags: [PIN]
-      summary: Update transaction PIN
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                old_pin:
-                  type: string
-                new_pin:
-                  type: string
-      responses:
-        "200":
-          description: PIN updated
+          description: Asset detail
+        "404":
+          description: User does not own this land
 
   ################################################################
   # DEPOSITS
@@ -853,7 +1666,8 @@ paths:
   /deposit:
     post:
       tags: [Deposits]
-      summary: Initiate a deposit (creates a pending deposit & returns payment URL)
+      summary: Initiate a deposit — returns a payment URL
+      description: Supports Paystack, Monnify, and OPay gateways.
       security:
         - bearerAuth: []
       requestBody:
@@ -861,52 +1675,47 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                amount:
-                  type: number
+              $ref: '#/components/schemas/DepositInitRequest'
       responses:
         "200":
-          description: Deposit initiated with payment_url and reference
+          description: Deposit initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositInitResponse'
+        "500":
+          description: Could not create deposit record
+        "502":
+          description: Gateway error
+
+  /deposit/{reference}:
+    get:
+      tags: [Deposits]
+      summary: Check deposit status by reference
+      description: For OPay deposits that are still pending, this actively polls the gateway.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/referenceParam'
+      responses:
+        "200":
+          description: Deposit status
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  payment_url:
-                    type: string
                   reference:
                     type: string
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
-
-  /deposit/callback:
-    get:
-      tags: [Deposits, Webhooks]
-      summary: Deposit callback route (signed, using temporary signed URL)
-      description: >
-        This route is expected to be called by Paystack (or redirect after payment) with a signed temporary URL.
-        Implementation uses Laravel signed routes for short-lived callback URLs.
-      parameters:
-        - name: reference
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Deposit verified and processed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
+                  gateway:
                     type: string
+                  status:
+                    type: string
+                    enum: [pending, completed, failed]
                   amount:
                     type: number
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Deposit not found
 
   ################################################################
   # WITHDRAWALS
@@ -915,22 +1724,21 @@ paths:
   /withdraw:
     post:
       tags: [Withdrawals]
-      summary: Request a withdrawal (creates a pending withdrawal, decrements balance)
+      summary: Request a withdrawal
+      description: >
+        Validates transaction PIN inline (passed in the request body), checks KYC,
+        enforces daily limit, debits balance, and initiates a Paystack transfer.
       security:
         - bearerAuth: []
-      description: Requires transaction PIN middleware to have been validated on the route.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                amount:
-                  type: number
+              $ref: '#/components/schemas/WithdrawalRequest'
       responses:
         "200":
-          description: Withdrawal request initiated
+          description: Withdrawal initiated
           content:
             application/json:
               schema:
@@ -941,14 +1749,16 @@ paths:
                   reference:
                     type: string
         "400":
-          $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          $ref: '#/components/schemas/ErrorResponse'
+          description: Missing bank details
+        "403":
+          description: KYC required
+        "422":
+          description: Insufficient balance, daily limit reached, or invalid PIN
 
   /withdrawals/{reference}:
     get:
       tags: [Withdrawals]
-      summary: Get status of a withdrawal by reference
+      summary: Get withdrawal status by reference
       security:
         - bearerAuth: []
       parameters:
@@ -961,33 +1771,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/Withdrawal'
         "404":
-          $ref: '#/components/schemas/ErrorResponse'
+          description: Not found
 
   /withdrawal/retry:
     get:
       tags: [Withdrawals]
-      summary: Retry pending withdrawals (admin/internal)
+      summary: Retry all pending withdrawals (admin / internal)
       security:
         - bearerAuth: []
       responses:
         "200":
           description: Pending withdrawals retried
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
 
   ################################################################
-  # BANKS & ACCOUNT RESOLUTION (Paystack helpers)
+  # BANKS
   ################################################################
 
   /paystack/banks:
     get:
       tags: [Banks]
-      summary: Get cached list of banks (from Paystack)
+      summary: Get cached list of Nigerian banks from Paystack
       security:
         - bearerAuth: []
       responses:
@@ -996,12 +1799,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BankList'
+                type: object
+                properties:
+                  banks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Bank'
 
   /paystack/resolve-account:
     post:
       tags: [Banks]
-      summary: Resolve account number to account name using Paystack
+      summary: Resolve account number to account name
       security:
         - bearerAuth: []
       requestBody:
@@ -1012,18 +1820,68 @@ paths:
               $ref: '#/components/schemas/ResolveAccountRequest'
       responses:
         "200":
-          description: Resolved account name
+          description: Resolved account
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResolveAccountResponse'
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
+        "502":
+          description: Could not resolve account
 
-  /user/bank-details:
-    put:
-      tags: [User, Banks]
-      summary: Update user's bank details (account number, bank code, bank name)
+  ################################################################
+  # TRANSACTION PIN
+  ################################################################
+
+  /pin/set:
+    post:
+      tags: [PIN]
+      summary: Set transaction PIN for the first time
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinSetRequest'
+      responses:
+        "200":
+          description: PIN set
+        "422":
+          description: PIN already set
+
+  /pin/update:
+    post:
+      tags: [PIN]
+      summary: Change existing transaction PIN
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinUpdateRequest'
+      responses:
+        "200":
+          description: PIN updated
+        "422":
+          description: Current PIN incorrect
+
+  /pin/forgot:
+    post:
+      tags: [PIN]
+      summary: Send PIN reset code to authenticated user's email
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reset code sent
+
+  /pin/verify-code:
+    post:
+      tags: [PIN]
+      summary: Verify PIN reset code — returns a short-lived reset token
       security:
         - bearerAuth: []
       requestBody:
@@ -1032,24 +1890,46 @@ paths:
           application/json:
             schema:
               type: object
+              required: [code]
               properties:
-                account_number:
+                code:
                   type: string
-                bank_code:
-                  type: string
-                bank_name:
-                  type: string
+                  minLength: 6
+                  maxLength: 6
       responses:
         "200":
-          description: Bank details updated successfully
+          description: Code verified
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponse'
-        "400":
-          $ref: '#/components/schemas/ErrorResponse'
-        "500":
-          $ref: '#/components/schemas/ErrorResponse'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  reset_token:
+                    type: string
+                  message:
+                    type: string
+        "422":
+          description: Invalid or expired code
+
+  /pin/reset:
+    post:
+      tags: [PIN]
+      summary: Reset transaction PIN using reset token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinResetRequest'
+      responses:
+        "200":
+          description: PIN reset
+        "422":
+          description: Invalid or expired reset token
 
   ################################################################
   # NOTIFICATIONS
@@ -1058,26 +1938,27 @@ paths:
   /notifications:
     get:
       tags: [Notifications]
-      summary: Get all notifications for authenticated user
+      summary: Get all notifications (paginated)
       security:
         - bearerAuth: []
       responses:
         "200":
-          description: Notifications list
+          description: Notifications
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  success:
+                    type: boolean
                   notifications:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Notification'
+                    type: object
+                    description: Paginated result
 
   /notifications/unread:
     get:
       tags: [Notifications]
-      summary: Get only unread notifications
+      summary: Get unread notifications
       security:
         - bearerAuth: []
       responses:
@@ -1088,6 +1969,8 @@ paths:
               schema:
                 type: object
                 properties:
+                  success:
+                    type: boolean
                   unread_notifications:
                     type: array
                     items:
@@ -1101,53 +1984,145 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Marked as read
+          description: All notifications marked as read
+
+  /notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a single notification as read
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/notificationId'
+      responses:
+        "200":
+          description: Notification marked as read
+        "404":
+          description: Not found
+
+  ################################################################
+  # REFERRALS
+  ################################################################
+
+  /referrals/dashboard:
+    get:
+      tags: [Referrals]
+      summary: Referral dashboard — code, link, stats, and reward history
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Referral dashboard data
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponse'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      referral_code:
+                        type: string
+                      referral_link:
+                        type: string
+                        format: uri
+                      total_referrals:
+                        type: integer
+                      completed_referrals:
+                        type: integer
+                      pending_referrals:
+                        type: integer
+                      total_rewards_kobo:
+                        type: integer
+                      unclaimed_rewards_kobo:
+                        type: integer
+                      referrals:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Referral'
+                      rewards:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ReferralReward'
 
-  ################################################################
-  # PAYSTACK WEBHOOK (PUBLIC)
-  ################################################################
-
-  /paystack/webhook:
+  /referrals/validate:
     post:
-      tags: [Webhooks]
-      summary: Paystack webhook for transfer/withdrawal events
-      description: >
-        Public endpoint for Paystack webhook events. When not running in test mode,
-        the controller verifies the 'x-paystack-signature' header using your webhook secret.
-        Example header: x-paystack-signature: <sha512-hmac>
+      tags: [Referrals]
+      summary: Validate a referral code
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PaystackWebhookSchema'
-      parameters:
-        - name: x-paystack-signature
-          in: header
-          required: false
-          schema:
-            type: string
-          description: Paystack HMAC SHA512 signature header (required in production)
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
       responses:
         "200":
-          description: Callback handled
-        "403":
-          description: Invalid signature (unauthorized webhook)
+          description: Code valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      referrer_name:
+                        type: string
         "404":
-          description: Resource not found
+          description: Invalid referral code
 
-  ################################################################
-  # MISC
-  ################################################################
+  /referrals/rewards/available:
+    get:
+      tags: [Referrals]
+      summary: Get unclaimed referral rewards
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Available rewards
 
-  /user/change-password:
+  /referrals/rewards/{id}/claim:
     post:
-      tags: [Auth]
-      summary: Change password for authenticated user
+      tags: [Referrals]
+      summary: Claim a referral reward
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Reward claimed
+        "400":
+          description: Already claimed
+        "404":
+          description: Reward not found
+
+  ################################################################
+  # SUPPORT
+  ################################################################
+
+  /support/chat:
+    post:
+      tags: [Support]
+      summary: AI-powered support chat
+      description: >
+        Rate limited to 20 messages per 10 minutes.
+        Automatically escalates financial/security keywords to ticket creation.
       security:
         - bearerAuth: []
       requestBody:
@@ -1155,7 +2130,836 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChangePasswordRequest'
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant]
+                      content:
+                        type: string
+                        maxLength: 2000
       responses:
         "200":
-          description: Password changed
+          description: AI reply
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      reply:
+                        type: string
+                      escalate:
+                        type: boolean
+                      from_faq:
+                        type: boolean
+        "429":
+          description: Rate limit exceeded
+        "503":
+          description: AI service unavailable
+
+  /support/tickets:
+    get:
+      tags: [Support]
+      summary: List own support tickets (paginated)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ticket list
+    post:
+      tags: [Support]
+      summary: Create a new support ticket
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [subject, category, message]
+              properties:
+                subject:
+                  type: string
+                  maxLength: 150
+                category:
+                  type: string
+                  enum: [account, payment, kyc, investment, withdrawal, other]
+                message:
+                  type: string
+                  maxLength: 3000
+                priority:
+                  type: string
+                  enum: [low, normal, high]
+                  nullable: true
+                attachment:
+                  type: string
+                  format: binary
+                  nullable: true
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/SupportTicket'
+
+  /support/guest-tickets:
+    post:
+      tags: [Support]
+      summary: Submit a support ticket as a guest (rate limited 5/10 min per IP)
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name, email, subject, category, message]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                email:
+                  type: string
+                  format: email
+                subject:
+                  type: string
+                  maxLength: 150
+                category:
+                  type: string
+                  enum: [account, payment, kyc, investment, withdrawal, other]
+                message:
+                  type: string
+                  maxLength: 3000
+                attachment:
+                  type: string
+                  format: binary
+                  nullable: true
+      responses:
+        "201":
+          description: Guest ticket submitted
+        "429":
+          description: Rate limit exceeded
+
+  /support/tickets/{ticket}:
+    get:
+      tags: [Support]
+      summary: Get a single support ticket with messages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Ticket detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/SupportTicket'
+        "404":
+          description: Ticket not found
+
+  /support/tickets/{ticket}/reply:
+    post:
+      tags: [Support]
+      summary: Reply to a support ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  maxLength: 3000
+                attachment:
+                  type: string
+                  format: binary
+                  nullable: true
+      responses:
+        "201":
+          description: Reply sent
+        "422":
+          description: Ticket already resolved
+
+  /support/tickets/{ticket}/close:
+    patch:
+      tags: [Support]
+      summary: Close / resolve a support ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Ticket closed
+
+  /support/faqs:
+    get:
+      tags: [Support]
+      summary: Get FAQs grouped by category (cached 1 hour)
+      security: []
+      responses:
+        "200":
+          description: FAQs grouped by category
+
+  ################################################################
+  # ADMIN — LANDS
+  ################################################################
+
+  /admin/lands:
+    get:
+      tags: [Admin – Lands]
+      summary: List all lands with pagination (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated land list
+    post:
+      tags: [Admin – Lands]
+      summary: Create a new land with geometry and optional images
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, location, size, total_units, geometry, price_per_unit_kobo]
+              properties:
+                title:
+                  type: string
+                  maxLength: 200
+                location:
+                  type: string
+                  maxLength: 200
+                size:
+                  type: number
+                total_units:
+                  type: integer
+                description:
+                  type: string
+                  nullable: true
+                geometry:
+                  type: string
+                  description: GeoJSON geometry object (Point or Polygon) — JSON-encoded
+                price_per_unit_kobo:
+                  type: integer
+                  minimum: 1
+                images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "201":
+          description: Land created
+        "422":
+          description: Validation error
+
+  /admin/lands/{id}:
+    post:
+      tags: [Admin – Lands]
+      summary: Update land details (POST used for multipart compatibility)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                location:
+                  type: string
+                size:
+                  type: number
+                description:
+                  type: string
+                geometry:
+                  type: string
+                  description: GeoJSON geometry (JSON-encoded)
+                images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "200":
+          description: Land updated
+
+  /admin/lands/{id}/price:
+    patch:
+      tags: [Admin – Lands]
+      summary: Update land price (creates a new price history record)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [price_per_unit_kobo]
+              properties:
+                price_per_unit_kobo:
+                  type: integer
+                  minimum: 1
+                price_date:
+                  type: string
+                  format: date
+                  nullable: true
+      responses:
+        "200":
+          description: Price updated
+
+  /admin/lands/{id}/availability:
+    patch:
+      tags: [Admin – Lands]
+      summary: Toggle land availability on/off
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      responses:
+        "200":
+          description: Availability toggled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  is_available:
+                    type: boolean
+
+  ################################################################
+  # ADMIN — USERS
+  ################################################################
+
+  /admin/users:
+    get:
+      tags: [Admin – Users]
+      summary: List users with filters and search
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: suspended
+          in: query
+          schema:
+            type: boolean
+        - name: is_admin
+          in: query
+          schema:
+            type: boolean
+        - name: kyc_status
+          in: query
+          schema:
+            type: string
+            enum: [not_submitted, pending, approved, rejected, resubmit]
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [created_at, name, email, balance_kobo]
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        "200":
+          description: User list
+
+  /admin/users/{user}:
+    get:
+      tags: [Admin – Users]
+      summary: Get a single user with recent transactions and KYC
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: User detail
+    delete:
+      tags: [Admin – Users]
+      summary: Delete a non-admin user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: User deleted
+        "403":
+          description: Cannot delete admin or self
+
+  /admin/users/{user}/suspend:
+    patch:
+      tags: [Admin – Users]
+      summary: Suspend a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: User suspended
+        "403":
+          description: Cannot suspend admin
+
+  /admin/users/{user}/unsuspend:
+    patch:
+      tags: [Admin – Users]
+      summary: Unsuspend a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: User unsuspended
+
+  /admin/users/{user}/make-admin:
+    patch:
+      tags: [Admin – Users]
+      summary: Grant admin privileges to a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: Admin granted
+
+  /admin/users/{user}/remove-admin:
+    patch:
+      tags: [Admin – Users]
+      summary: Revoke admin privileges
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: Admin revoked
+        "403":
+          description: Cannot remove own admin privileges
+
+  ################################################################
+  # ADMIN — KYC
+  ################################################################
+
+  /admin/kyc:
+    get:
+      tags: [Admin – KYC]
+      summary: List KYC submissions with optional status filter
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected, resubmit]
+      responses:
+        "200":
+          description: Paginated KYC list
+
+  /admin/kyc/{id}:
+    get:
+      tags: [Admin – KYC]
+      summary: Get a single KYC record with image URLs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/kycId'
+      responses:
+        "200":
+          description: KYC record with image URLs
+
+  /admin/kyc/{id}/approve:
+    post:
+      tags: [Admin – KYC]
+      summary: Approve a KYC submission
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/kycId'
+      responses:
+        "200":
+          description: KYC approved
+        "400":
+          description: Already approved
+
+  /admin/kyc/{id}/reject:
+    post:
+      tags: [Admin – KYC]
+      summary: Reject a KYC submission
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/kycId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: KYC rejected
+
+  /admin/kyc/{id}/resubmit:
+    post:
+      tags: [Admin – KYC]
+      summary: Request KYC resubmission from user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/kycId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Resubmission requested
+
+  ################################################################
+  # ADMIN — SUPPORT
+  ################################################################
+
+  /admin/support/tickets:
+    get:
+      tags: [Admin – Support]
+      summary: List all support tickets with filters
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, waiting, closed]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, normal, high]
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum: [account, payment, kyc, investment, withdrawal, other]
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Ticket list
+
+  /admin/support/tickets/{ticket}:
+    get:
+      tags: [Admin – Support]
+      summary: Get a ticket with all messages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Ticket detail
+    delete:
+      tags: [Admin – Support]
+      summary: Delete a closed ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Ticket deleted
+        "422":
+          description: Ticket must be closed first
+
+  /admin/support/tickets/{ticket}/reply:
+    post:
+      tags: [Admin – Support]
+      summary: Reply to a ticket as admin
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  maxLength: 5000
+                attachment:
+                  type: string
+                  format: binary
+                  nullable: true
+      responses:
+        "201":
+          description: Reply sent
+        "422":
+          description: Ticket is closed
+
+  /admin/support/tickets/{ticket}/status:
+    patch:
+      tags: [Admin – Support]
+      summary: Update ticket status and/or priority
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [open, waiting, closed]
+                priority:
+                  type: string
+                  enum: [low, normal, high]
+      responses:
+        "200":
+          description: Ticket updated
+        "422":
+          description: Provide at least one of status or priority
+
+  /admin/support/stats:
+    get:
+      tags: [Admin – Support]
+      summary: Support ticket statistics (cached 5 min)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Support stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      open:
+                        type: integer
+                      waiting:
+                        type: integer
+                      resolved:
+                        type: integer
+                      high_priority:
+                        type: integer
+                      by_category:
+                        type: object
+
+  ################################################################
+  # ADMIN — REFERRALS
+  ################################################################
+
+  /admin/referrals:
+    get:
+      tags: [Admin – Referrals]
+      summary: List all referrals (paginated)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, completed]
+      responses:
+        "200":
+          description: Referral list
+
+  /admin/referrals/stats:
+    get:
+      tags: [Admin – Referrals]
+      summary: Referral programme statistics and top referrers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Referral stats
+
+  ################################################################
+  # WEBHOOKS (public — no JWT)
+  ################################################################
+
+  /paystack/webhook:
+    post:
+      tags: [Webhooks]
+      summary: Paystack webhook (charge.success, transfer events)
+      description: >
+        Verifies the `x-paystack-signature` HMAC-SHA512 header before processing.
+        Handles `charge.success` to credit deposits and logs transfer events.
+      security: []
+      parameters:
+        - name: x-paystack-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaystackWebhookPayload'
+      responses:
+        "200":
+          description: Event handled
+        "400":
+          description: Missing signature
+        "403":
+          description: Invalid signature
+
+  /monnify/webhook:
+    post:
+      tags: [Webhooks]
+      summary: Monnify webhook (SUCCESSFUL_TRANSACTION)
+      description: >
+        Verifies the `monnify-signature` HMAC-SHA512 header.
+        Credits the user wallet on successful transactions.
+      security: []
+      parameters:
+        - name: monnify-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonnifyWebhookPayload'
+      responses:
+        "200":
+          description: Event handled
+        "400":
+          description: Missing or invalid signature
+
+  /opay/webhook:
+    post:
+      tags: [Webhooks]
+      summary: OPay webhook (payment SUCCESS)
+      description: >
+        Verifies the `Signature` HMAC-SHA512 header (body signed with OPAY_SECRET_KEY).
+        Credits the user wallet on successful OPay payments.
+        Idempotent — duplicate callbacks are safely ignored.
+      security: []
+      parameters:
+        - name: Signature
+          in: header
+          required: true
+          schema:
+            type: string
+          description: HMAC-SHA512 of the raw JSON body using OPAY_SECRET_KEY
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpayWebhookPayload'
+      responses:
+        "200":
+          description: Event handled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "400":
+          description: Missing signature or bad payload
+        "403":
+          description: Invalid signature
+        "404":
+          description: Deposit reference not found

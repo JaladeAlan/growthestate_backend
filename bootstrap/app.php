@@ -12,24 +12,28 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        $middleware->api(prepend: [
-            \Illuminate\Http\Middleware\HandleCors::class,
-        ]);
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
 
+        $middleware->validateCsrfTokens(except: [
+            'api/paystack/webhook',
+            'api/monnify/webhook',
+            'api/opay/webhook',       
+        ]);
+        
         $middleware->alias([
             // Auth
             'auth'               => \App\Http\Middleware\Authenticate::class,
             'jwt.auth'           => \App\Http\Middleware\JwtMiddleware::class,
             'jwt.refresh'        => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
-
+    
             // Authorization
             'admin'              => \App\Http\Middleware\AdminMiddleware::class,
             'verified'           => \App\Http\Middleware\EnsureEmailIsVerified::class,
             'suspended'          => \App\Http\Middleware\EnsureUserIsNotSuspended::class,
-
+    
             // Transaction PIN
             'check.pin'          => \App\Http\Middleware\CheckTransactionPin::class,
-
+    
             // Rate limiting
             'throttle.sensitive' => \App\Http\Middleware\ThrottleSensitiveRequests::class,
         ]);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Deposit;
 use App\Services\Payments\DepositService;
 use App\Services\Payments\MonnifyService;
+use App\Services\Payments\OpayService;
 use App\Services\Payments\PaystackService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -12,15 +13,19 @@ use Illuminate\Support\Facades\Cache;
 
 class DepositController extends Controller
 {
+    // Supported gateways — add new ones here.
+    private const GATEWAYS = ['monnify', 'paystack', 'opay'];
+
     public function initiateDeposit(Request $request)
     {
         $user = $request->user();
 
         $request->validate([
             'amount'  => 'required|integer|min:100000|max:1000000000',
-            'gateway' => 'required|in:monnify,paystack',
+            'gateway' => 'required|in:' . implode(',', self::GATEWAYS),
         ]);
 
+        // ── Create pending deposit record ──────────────────────────────────────
         try {
             $deposit = DepositService::createDepositKobo(
                 $user,
@@ -40,27 +45,45 @@ class DepositController extends Controller
 
         $callbackUrl = config('app.frontend_url') . "/wallet?reference={$deposit->reference}";
 
+        // ── Initialize with the chosen gateway ────────────────────────────────
         try {
-            if ($deposit->gateway === 'monnify') {
-              $response = MonnifyService::initialize(
-                    $user->email,
-                    $deposit->reference,
-                    $deposit->total_kobo,
-                    $callbackUrl,
-                    $user->name
-                );
+            $paymentUrl = match ($deposit->gateway) {
 
-                $paymentUrl = $response['responseBody']['checkoutUrl'] ?? null;
-            } else { // paystack
-                $response = PaystackService::initialize(
-                    $user->email,
-                    $deposit->total_kobo,
-                    $deposit->reference,
-                    $callbackUrl
-                );
+                'monnify' => (function () use ($user, $deposit, $callbackUrl) {
+                    $res = MonnifyService::initialize(
+                        $user->email,
+                        $deposit->reference,
+                        $deposit->total_kobo,
+                        $callbackUrl,
+                        $user->name
+                    );
+                    return $res['responseBody']['checkoutUrl'] ?? null;
+                })(),
 
-                $paymentUrl = $response['data']['authorization_url'] ?? null;
-            }
+                'paystack' => (function () use ($user, $deposit, $callbackUrl) {
+                    $res = PaystackService::initialize(
+                        $user->email,
+                        $deposit->total_kobo,
+                        $deposit->reference,
+                        $callbackUrl
+                    );
+                    return $res['data']['authorization_url'] ?? null;
+                })(),
+
+                'opay' => (function () use ($user, $deposit, $callbackUrl) {
+                    $res = OpayService::initialize(
+                        $user->email,
+                        $deposit->reference,
+                        $deposit->total_kobo,
+                        $callbackUrl,
+                        $user->name
+                    );
+                    return $res['data']['cashierUrl'] ?? null;
+                })(),
+
+                default => null,
+            };
+
         } catch (\Exception $e) {
             $deposit->delete();
 
@@ -112,6 +135,27 @@ class DepositController extends Controller
             return response()->json(['status' => 'not_found'], 404);
         }
 
+        // For OPay, actively poll the gateway if still pending
+        if ($deposit->gateway === 'opay' && $deposit->status === 'pending') {
+            try {
+                $result      = OpayService::verify($reference);
+                $orderStatus = strtoupper($result['data']['status'] ?? '');
+
+                if ($orderStatus === 'SUCCESS' && $deposit->processed_at === null) {
+                    // Webhook may not have fired yet — fire the same handler inline
+                    app(OpayWebhookController::class)
+                        ->processVerifiedDeposit($deposit);
+                    $deposit->refresh();
+                }
+            } catch (\Exception $e) {
+                Log::warning('OPay active verify failed', [
+                    'reference' => $reference,
+                    'error'     => $e->getMessage(),
+                ]);
+                // Non-fatal: return whatever status is in the DB
+            }
+        }
+
         return response()->json([
             'reference' => $deposit->reference,
             'gateway'   => $deposit->gateway,
@@ -120,23 +164,18 @@ class DepositController extends Controller
         ]);
     }
 
-   public function banks()
+    public function banks()
     {
         try {
             $banks = Cache::remember('paystack_banks', now()->addHours(6), function () {
                 return PaystackService::getBanks();
             });
         } catch (\Exception $e) {
-            Log::error('Failed to fetch banks', [
-                'error' => $e->getMessage(),
-            ]);
-
+            Log::error('Failed to fetch banks', ['error' => $e->getMessage()]);
             return response()->json(['error' => 'Could not fetch banks. Please try again.'], 502);
         }
 
-        return response()->json([
-            'banks' => $banks['data'] ?? [],
-        ]);
+        return response()->json(['banks' => $banks['data'] ?? []]);
     }
 
     public function resolveAccount(Request $request)
