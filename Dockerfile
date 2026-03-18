@@ -33,6 +33,7 @@ RUN composer install --optimize-autoloader --no-dev \
 
 EXPOSE 8000
 
+# Switch to www-data AFTER all chown/chmod steps above.
 USER www-data
 
 CMD ["/entrypoint.sh"]

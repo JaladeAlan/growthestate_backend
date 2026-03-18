@@ -2,22 +2,15 @@
 
 namespace App\Services\Payments;
 
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * OPay Cashier Payment Service
  *
- * Docs: https://documentation.opaycheckout.com/cashier-create
+ * Staging:    https://testapi.opaycheckout.com
+ * Production: https://liveapi.opaycheckout.com
  *
- * Config keys (config/services.php → services.opay.*):
- *   merchant_id — numeric merchant ID,  e.g. 2566260685
- *   public_key  — OPAYPUB...  (used as Bearer token for status/query APIs)
- *   secret_key  — OPAYPRV...  (used to sign the create-payment payload)
- *   base_url    — https://testapi.opaycheckout.com   (staging)
- *                 https://liveapi.opaycheckout.com   (production)
- *
- * .env keys:
+ * .env:
  *   OPAY_MERCHANT_ID=
  *   OPAY_PUBLIC_KEY=
  *   OPAY_SECRET_KEY=
@@ -30,16 +23,7 @@ class OpayService
 
     /**
      * Create an OPay Cashier payment order.
-     *
-     * Authentication for CREATE:
-     *   Authorization: Bearer {HMAC-SHA512 of raw JSON payload signed with secret_key}
-     *   MerchantId: {merchant_id}
-     *
-     * On success, redirect the user to $body['data']['cashierUrl'].
-     *
-     * @param  int  $amountKobo  Amount in kobo — converted to Naira internally
-     * @return array             Full OPay JSON response
-     * @throws \RuntimeException on network failure or non-00000 OPay code
+     * Returns the full response body; caller reads $body['data']['cashierUrl'].
      */
     public static function initialize(
         string $email,
@@ -48,13 +32,15 @@ class OpayService
         string $returnUrl,
         string $name = ''
     ): array {
-        $amountNaira = number_format($amountKobo / 100, 2, '.', '');
+        // OPay expects amount.total as a number (int or float), not a string.
+        // Their official sample uses 400 (integer). We send as float e.g. 1000.00
+        $amountNaira = round($amountKobo / 100, 2);
 
         $payload = [
             'country'     => 'NG',
             'reference'   => $reference,
             'amount'      => [
-                'total'    => $amountNaira,
+                'total'    => $amountNaira,   // numeric, not string
                 'currency' => 'NGN',
             ],
             'returnUrl'   => $returnUrl,
@@ -71,85 +57,23 @@ class OpayService
             ],
         ];
 
-        $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
-        $signature   = hash_hmac('sha512', $jsonPayload, config('services.opay.secret_key'));
-
-        $response = Http::timeout(20)
-            ->withHeaders([
-                'Authorization' => 'Bearer ' . $signature,
-                'MerchantId'    => config('services.opay.merchant_id'),
-                'Content-Type'  => 'application/json',
-            ])
-            ->withBody($jsonPayload, 'application/json')
-            ->post(static::url(self::ENDPOINT_CREATE));
-
-        static::assertSuccessful($response, 'OPay create');
-
-        $body = $response->json();
-
-        if (($body['code'] ?? null) !== '00000') {
-            Log::error('OPay create payment failed', [
-                'reference' => $reference,
-                'code'      => $body['code']    ?? null,
-                'message'   => $body['message'] ?? null,
-                'body'      => $body,
-            ]);
-            throw new \RuntimeException(
-                'OPay payment creation failed: ' . ($body['message'] ?? 'unknown error')
-            );
-        }
-
-        Log::info('OPay cashier order created', [
-            'reference'   => $reference,
-            'amount_ngn'  => $amountNaira,
-            'cashier_url' => $body['data']['cashierUrl'] ?? null,
-        ]);
-
-        return $body;
+        return static::request(self::ENDPOINT_CREATE, $payload, 'OPay create');
     }
 
     /**
      * Query payment status by merchant reference.
-     *
-     * Authentication for STATUS queries:
-     *   Authorization: Bearer {HMAC-SHA512 of raw JSON payload signed with secret_key}
-     *   MerchantId: {merchant_id}
-     *
-     * Possible data.status values: INITIAL | PENDING | SUCCESS | FAIL | CLOSE
+     * Possible data.status: INITIAL | PENDING | SUCCESS | FAIL | CLOSE
      */
     public static function verify(string $reference): array
     {
-        $payload     = ['reference' => $reference, 'country' => 'NG'];
-        $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
-        $signature   = hash_hmac('sha512', $jsonPayload, config('services.opay.secret_key'));
+        $payload = ['reference' => $reference, 'country' => 'NG'];
 
-        $response = Http::timeout(20)
-            ->withHeaders([
-                'Authorization' => 'Bearer ' . $signature,
-                'MerchantId'    => config('services.opay.merchant_id'),
-                'Content-Type'  => 'application/json',
-            ])
-            ->withBody($jsonPayload, 'application/json')
-            ->post(static::url(self::ENDPOINT_STATUS));
-
-        static::assertSuccessful($response, 'OPay verify');
-
-        $body = $response->json();
-
-        if (($body['code'] ?? null) !== '00000') {
-            throw new \RuntimeException(
-                'OPay verification failed: ' . ($body['message'] ?? 'unknown error')
-            );
-        }
-
-        return $body;
+        return static::request(self::ENDPOINT_STATUS, $payload, 'OPay verify');
     }
 
     /**
-     * Verify the HMAC-SHA512 signature on an incoming OPay webhook callback.
-     *
-     * OPay sends:  Authorization: Bearer {signature}
-     * Signature = HMAC-SHA512(raw JSON body, secret_key)
+     * Verify the HMAC-SHA512 signature on an incoming OPay webhook.
+     * OPay sends:  Authorization: Bearer {HMAC-SHA512 of raw JSON body}
      */
     public static function verifyWebhookSignature(string $rawBody, string $headerSignature): bool
     {
@@ -157,28 +81,80 @@ class OpayService
         return hash_equals($computed, $headerSignature);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Core request helper ───────────────────────────────────────────────────
 
-    private static function url(string $endpoint): string
+    /**
+     * Build, sign, and fire a cURL request — bypasses Guzzle entirely so there
+     * is zero risk of double-encoding or Content-Type conflicts.
+     *
+     * OPay auth:
+     *   Authorization: Bearer {HMAC-SHA512 of the exact JSON string being sent}
+     *   MerchantId: {merchant_id}
+     */
+    private static function request(string $endpoint, array $payload, string $context): array
     {
-        return rtrim(
-            config('services.opay.base_url', 'https://testapi.opaycheckout.com'),
-            '/'
-        ) . $endpoint;
-    }
+        // Encode once — this exact string is both sent as the body and signed.
+        $body      = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $signature = hash_hmac('sha512', $body, config('services.opay.secret_key'));
+        $url       = rtrim(config('services.opay.base_url', 'https://testapi.opaycheckout.com'), '/')
+                     . $endpoint;
 
-    private static function assertSuccessful(
-        \Illuminate\Http\Client\Response $response,
-        string $context
-    ): void {
-        if ($response->failed()) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_TIMEOUT        => 20,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . $signature,
+                'MerchantId: '           . config('services.opay.merchant_id'),
+            ],
+        ]);
+
+        $responseBody = curl_exec($ch);
+        $httpStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError    = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError) {
+            Log::error("{$context} cURL error", ['error' => $curlError, 'url' => $url]);
+            throw new \RuntimeException("{$context} network error: {$curlError}");
+        }
+
+        if ($httpStatus < 200 || $httpStatus >= 300) {
             Log::error("{$context} HTTP error", [
-                'status' => $response->status(),
-                'body'   => $response->body(),
+                'status' => $httpStatus,
+                'body'   => $responseBody,
+                'url'    => $url,
+            ]);
+            throw new \RuntimeException("{$context} failed (HTTP {$httpStatus}): {$responseBody}");
+        }
+
+        $decoded = json_decode($responseBody, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            Log::error("{$context} invalid JSON response", ['body' => $responseBody]);
+            throw new \RuntimeException("{$context} returned non-JSON: {$responseBody}");
+        }
+
+        if (($decoded['code'] ?? null) !== '00000') {
+            Log::error("{$context} failed", [
+                'code'    => $decoded['code']    ?? null,
+                'message' => $decoded['message'] ?? null,
+                'body'    => $decoded,
             ]);
             throw new \RuntimeException(
-                "{$context} request failed (HTTP {$response->status()}): " . $response->body()
+                "{$context} failed: " . ($decoded['message'] ?? 'unknown error')
             );
         }
+
+        Log::info("{$context} success", [
+            'code'         => $decoded['code'],
+            'cashier_url'  => $decoded['data']['cashierUrl'] ?? null,
+            'order_no'     => $decoded['data']['orderNo']    ?? null,
+        ]);
+
+        return $decoded;
     }
 }
