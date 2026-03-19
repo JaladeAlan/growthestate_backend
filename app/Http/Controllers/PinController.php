@@ -76,7 +76,7 @@ class PinController extends Controller
             'pin_reset_code_expires_at' => $expiresAt,
         ]);
 
-        Mail::to($user->email)->queue(new \App\Mail\PinResetCode($user, $code));
+        Mail::to($user->email)->queue(new \App\Mail\TransactionPinResetMail($user, $code));
 
         return response()->json([
             'success' => true,
