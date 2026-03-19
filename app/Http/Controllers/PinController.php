@@ -93,8 +93,8 @@ class PinController extends Controller
 
         if (
             ! $user->pin_reset_code ||
-            ! $user->pin_reset_code_expires_at ||
-            now()->isAfter($user->pin_reset_code_expires_at)
+            ! $user->pin_reset_expires_at ||
+            now()->isAfter($user->pin_reset_expires_at)
         ) {
             return response()->json(['success' => false, 'message' => 'Code has expired. Please request a new one.'], 422);
         }
@@ -110,7 +110,7 @@ class PinController extends Controller
             'pin_reset_token'            => Hash::make($resetToken),
             'pin_reset_token_expires_at' => now()->addMinutes(15),
             'pin_reset_code'             => null,
-            'pin_reset_code_expires_at'  => null,
+            'pin_reset_expires_at'  => null,
         ]);
 
         return response()->json([
