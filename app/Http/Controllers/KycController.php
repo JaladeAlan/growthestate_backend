@@ -67,7 +67,7 @@ class KycController extends Controller
             'country'       => 'sometimes|string|max:100',
             'id_type'       => 'required|in:nin,drivers_license,voters_card,passport,bvn',
             'id_number'     => 'required|string|max:50',
-            'id_front'      => [Rule::requiredIf(! $isBvn), 'nullable', 'image', 'max:5120'],
+            'id_front'      => [\Illuminate\Validation\Rule::requiredIf(! $isBvn), 'nullable', 'image', 'max:5120'],
             'id_back'       => 'nullable|image|max:5120',
             'selfie'        => 'required|image|max:5120',
         ]);
@@ -80,7 +80,9 @@ class KycController extends Controller
             ? $request->file('id_back')->store('kyc/ids', 'local')
             : null;
 
-        $selfiePath = $request->file('selfie')->store('kyc/selfies', 'local');
+        $selfiePath = $request->hasFile('selfie')
+            ? $request->file('selfie')->store('kyc/selfies', 'local')
+            : null;
 
         try {
             $kyc = DB::transaction(function () use ($user, $data, $idFrontPath, $idBackPath, $selfiePath) {
