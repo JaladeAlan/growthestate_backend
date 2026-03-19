@@ -47,8 +47,8 @@ Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTick
 
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
-Route::post('/opay/webhook',     [App\Http\Controllers\OpayWebhookController::class, 'handle'])
-     ->name('opay.webhook');
+// Route::post('/opay/webhook',     [App\Http\Controllers\OpayWebhookController::class, 'handle'])
+//      ->name('opay.webhook');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTHENTICATED (JWT required, account must not be suspended)

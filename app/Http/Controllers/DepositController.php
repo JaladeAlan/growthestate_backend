@@ -70,16 +70,16 @@ class DepositController extends Controller
                     return $res['data']['authorization_url'] ?? null;
                 })(),
 
-                'opay' => (function () use ($user, $deposit, $callbackUrl) {
-                    $res = OpayService::initialize(
-                        $user->email,
-                        $deposit->reference,
-                        $deposit->total_kobo,
-                        $callbackUrl,
-                        $user->name
-                    );
-                    return $res['data']['cashierUrl'] ?? null;
-                })(),
+                // 'opay' => (function () use ($user, $deposit, $callbackUrl) {
+                //     $res = OpayService::initialize(
+                //         $user->email,
+                //         $deposit->reference,
+                //         $deposit->total_kobo,
+                //         $callbackUrl,
+                //         $user->name
+                //     );
+                //     return $res['data']['cashierUrl'] ?? null;
+                // })(),
 
                 default => null,
             };
@@ -135,26 +135,26 @@ class DepositController extends Controller
             return response()->json(['status' => 'not_found'], 404);
         }
 
-        // For OPay, actively poll the gateway if still pending
-        if ($deposit->gateway === 'opay' && $deposit->status === 'pending') {
-            try {
-                $result      = OpayService::verify($reference);
-                $orderStatus = strtoupper($result['data']['status'] ?? '');
+        // // For OPay, actively poll the gateway if still pending
+        // if ($deposit->gateway === 'opay' && $deposit->status === 'pending') {
+        //     try {
+        //         $result      = OpayService::verify($reference);
+        //         $orderStatus = strtoupper($result['data']['status'] ?? '');
 
-                if ($orderStatus === 'SUCCESS' && $deposit->processed_at === null) {
-                    // Webhook may not have fired yet — fire the same handler inline
-                    app(OpayWebhookController::class)
-                        ->processVerifiedDeposit($deposit);
-                    $deposit->refresh();
-                }
-            } catch (\Exception $e) {
-                Log::warning('OPay active verify failed', [
-                    'reference' => $reference,
-                    'error'     => $e->getMessage(),
-                ]);
-                // Non-fatal: return whatever status is in the DB
-            }
-        }
+        //         if ($orderStatus === 'SUCCESS' && $deposit->processed_at === null) {
+        //             // Webhook may not have fired yet — fire the same handler inline
+        //             app(OpayWebhookController::class)
+        //                 ->processVerifiedDeposit($deposit);
+        //             $deposit->refresh();
+        //         }
+        //     } catch (\Exception $e) {
+        //         Log::warning('OPay active verify failed', [
+        //             'reference' => $reference,
+        //             'error'     => $e->getMessage(),
+        //         ]);
+        //         // Non-fatal: return whatever status is in the DB
+        //     }
+        // }
 
         return response()->json([
             'reference' => $deposit->reference,
