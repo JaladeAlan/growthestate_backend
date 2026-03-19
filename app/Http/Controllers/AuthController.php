@@ -241,7 +241,7 @@ class AuthController extends Controller
     /**
      * Verify reset code — for UX only (shows user the code is valid).
      */
-    public function verifyResetCode(Request $request)
+    public function verifyPasswordResetCode(Request $request)
     {
         $request->validate([
             'email'      => 'required|string|email',
