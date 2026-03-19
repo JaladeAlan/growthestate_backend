@@ -6,6 +6,7 @@ use App\Models\KycVerification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class KycController extends Controller
 {
@@ -54,6 +55,8 @@ class KycController extends Controller
             ], 400);
         }
 
+        $isBvn = $request->input('id_type') === 'bvn';
+
         $data = $request->validate([
             'full_name'     => 'required|string|max:255',
             'date_of_birth' => 'required|date|before:today',
@@ -64,16 +67,20 @@ class KycController extends Controller
             'country'       => 'sometimes|string|max:100',
             'id_type'       => 'required|in:nin,drivers_license,voters_card,passport,bvn',
             'id_number'     => 'required|string|max:50',
-            'id_front'      => 'required|image|max:5120',
+            'id_front'      => [Rule::requiredIf(! $isBvn), 'nullable', 'image', 'max:5120'],
             'id_back'       => 'nullable|image|max:5120',
             'selfie'        => 'required|image|max:5120',
         ]);
 
-        $idFrontPath = $request->file('id_front')->store('kyc/ids', 'local');
-        $idBackPath  = $request->hasFile('id_back')
+        $idFrontPath = $request->hasFile('id_front')
+            ? $request->file('id_front')->store('kyc/ids', 'local')
+            : null;
+
+        $idBackPath = $request->hasFile('id_back')
             ? $request->file('id_back')->store('kyc/ids', 'local')
             : null;
-        $selfiePath  = $request->file('selfie')->store('kyc/selfies', 'local');
+
+        $selfiePath = $request->file('selfie')->store('kyc/selfies', 'local');
 
         try {
             $kyc = DB::transaction(function () use ($user, $data, $idFrontPath, $idBackPath, $selfiePath) {
@@ -163,8 +170,8 @@ class KycController extends Controller
 
         $base = url("/api/kyc/{$kyc->id}/image");
 
-        $data['id_front_url'] = "{$base}/id_front";
-        $data['id_back_url']  = $kyc->id_back_path ? "{$base}/id_back" : null;
+        $data['id_front_url'] = $kyc->id_front_path ? "{$base}/id_front" : null;
+        $data['id_back_url']  = $kyc->id_back_path  ? "{$base}/id_back"  : null;
         $data['selfie_url']   = "{$base}/selfie";
 
         unset($data['id_front_path'], $data['id_back_path'], $data['selfie_path']);
