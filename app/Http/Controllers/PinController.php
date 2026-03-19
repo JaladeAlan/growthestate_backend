@@ -73,7 +73,7 @@ class PinController extends Controller
 
         $user->update([
             'pin_reset_code'            => Hash::make($code),
-            'pin_reset_code_expires_at' => $expiresAt,
+            'pin_reset_expires_at' => $expiresAt,
         ]);
 
         Mail::to($user->email)->queue(new \App\Mail\TransactionPinResetMail($user, $code));
