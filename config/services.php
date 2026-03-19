@@ -50,9 +50,10 @@ return [
 ],
 
     'opay' => [
-        'merchant_id' => env('OPAY_MERCHANT_ID'),
-        'public_key'  => env('OPAY_PUBLIC_KEY'),
-        'secret_key'  => env('OPAY_SECRET_KEY'),
+        'secret_key' => trim(env('OPAY_SECRET_KEY')),
+        'public_key' => trim(env('OPAY_PUBLIC_KEY')),
+        'merchant_id' => trim(env('OPAY_MERCHANT_ID')),
+        'base_url'    => env('OPAY_BASE_URL', 'https://testapi.opaycheckout.com'),
 
         /*
         * Sandbox : https://sandboxapi.opayweb.com
