@@ -4,10 +4,10 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Log;
-use App\Models\Withdrawal;
 
 class WithdrawalConfirmed extends Notification implements ShouldQueue
 {
@@ -18,49 +18,60 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
 
     protected array $withdrawalData;
 
-    public function __construct(Withdrawal $withdrawal)
+    public function __construct($withdrawal)
     {
         $this->withdrawalData = [
-            'id'          => $withdrawal->id,
-            'reference'   => $withdrawal->reference,
-            'amount_kobo' => $withdrawal->amount_kobo,
+            'id'             => $withdrawal->id,
+            'amount_kobo'    => $withdrawal->amount_kobo,
+            'reference'      => $withdrawal->reference ?? null,
+            'bank_name'      => $withdrawal->bank_name ?? null,
+            'account_number' => $withdrawal->account_number ?? null,
+            'date'           => $withdrawal->withdrawal_date
+                                ? \Carbon\Carbon::parse($withdrawal->withdrawal_date)->toFormattedDateString()
+                                : now()->toFormattedDateString(),
         ];
     }
 
     public function via($notifiable): array
     {
-        return ['database', 'mail'];
+        return ['database', 'broadcast', 'mail'];
     }
 
     public function toMail($notifiable): MailMessage
     {
-        $amount   = number_format($this->withdrawalData['amount_kobo'] / 100, 2);
-        $ref      = $this->withdrawalData['reference'];
-        $appName  = config('app.name');
-        $walletUrl = rtrim(config('app.frontend_url'), '/') . '/wallet';
+        $data = (object) array_merge($this->withdrawalData, [
+            'user' => $notifiable,
+        ]);
 
         return (new MailMessage)
-            ->subject("Withdrawal Confirmed – ₦{$amount}")
-            ->greeting('Hello ' . $notifiable->name . ',')
-            ->line("Your withdrawal has been processed successfully.")
-            ->line("**Amount:** ₦{$amount}")
-            ->line("**Reference:** {$ref}")
-            ->action('View Wallet', $walletUrl)
-            ->line("Funds should arrive in your bank account within 1–3 business days.")
-            ->line("Thank you for using {$appName}!")
-            ->salutation("Best regards, The {$appName} Team");
+            ->subject('Withdrawal Confirmed – ₦' . number_format($this->withdrawalData['amount_kobo'] / 100, 2))
+            ->view('emails.withdrawal_confirmed', ['withdrawal' => $data]);
     }
 
     public function toDatabase($notifiable): array
     {
         return [
-            'withdrawal_id' => $this->withdrawalData['id'],
-            'amount_kobo'   => $this->withdrawalData['amount_kobo'],
-            'reference'     => $this->withdrawalData['reference'],
-            'message'       => "Your withdrawal of ₦"
-                               . number_format($this->withdrawalData['amount_kobo'] / 100, 2)
-                               . " has been confirmed.",
+            'withdrawal_id'  => $this->withdrawalData['id'],
+            'amount_kobo'    => $this->withdrawalData['amount_kobo'],
+            'bank_name'      => $this->withdrawalData['bank_name'],
+            'account_number' => $this->withdrawalData['account_number'],
+            'reference'      => $this->withdrawalData['reference'],
+            'message'        => 'Your withdrawal of ₦'
+                                . number_format($this->withdrawalData['amount_kobo'] / 100, 2)
+                                . ' has been confirmed.',
         ];
+    }
+
+    public function toBroadcast($notifiable): BroadcastMessage
+    {
+        return new BroadcastMessage([
+            'withdrawal_id'  => $this->withdrawalData['id'],
+            'amount_kobo'    => $this->withdrawalData['amount_kobo'],
+            'bank_name'      => $this->withdrawalData['bank_name'],
+            'reference'      => $this->withdrawalData['reference'],
+            'message'        => '₦' . number_format($this->withdrawalData['amount_kobo'] / 100, 2) . ' withdrawal confirmed!',
+            'timestamp'      => now(),
+        ]);
     }
 
     public function toArray($notifiable): array
@@ -68,9 +79,6 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
         return $this->toDatabase($notifiable);
     }
 
-    /**
-     * Handle notification delivery failure gracefully.
-     */
     public function failed(\Throwable $exception): void
     {
         Log::warning('WithdrawalConfirmed notification delivery failed', [

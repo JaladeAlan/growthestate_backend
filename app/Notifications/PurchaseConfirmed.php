@@ -47,29 +47,18 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 
     public function toMail($notifiable): MailMessage
     {
-        $amount    = number_format($this->transactionData['amount_kobo'] / 100, 2);
-        $units     = $this->transactionData['units'];
-        $land      = $this->transactionData['land_title'] ?? 'your selected property';
-        $reference = $this->transactionData['reference'];
-        $date      = $this->transactionData['date'];
-        $appName   = config('app.name');
-        $dashUrl   = rtrim(config('app.frontend_url'), '/') . '/portfolio';
+        $data = (object) array_merge($this->transactionData, [
+            'user' => $notifiable,
+            'land' => isset($this->transactionData['land_title'])
+                        ? (object) ['title' => $this->transactionData['land_title']]
+                        : null,
+        ]);
 
         return (new MailMessage)
-            ->subject("Purchase Confirmed – {$units} unit(s) of {$land}")
-            ->greeting('Hello ' . $notifiable->name . ',')
-            ->line("Your purchase has been confirmed. Here is a summary:")
-            ->line("**Property:** {$land}")
-            ->line("**Units purchased:** {$units}")
-            ->line("**Total paid:** ₦{$amount}")
-            ->line("**Reference:** {$reference}")
-            ->line("**Date:** {$date}")
-            ->action('View Portfolio', $dashUrl)
-            ->line("Your units are now live in your portfolio and accruing value.")
-            ->line("Thank you for investing with {$appName}!")
-            ->salutation("Best regards, The {$appName} Team");
+            ->subject("Purchase Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
+            ->view('emails.purchase_confirmed', ['transaction' => $data]);
     }
-
+    
     public function toDatabase($notifiable): array
     {
         return [

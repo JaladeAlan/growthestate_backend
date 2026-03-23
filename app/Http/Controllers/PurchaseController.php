@@ -31,11 +31,10 @@ class PurchaseController extends Controller
             'use_rewards' => ['sometimes', 'boolean'],
         ]);
 
-        $useRewards = $request->boolean('use_rewards', true);
-
-        $eventPayload    = null;
+        $useRewards   = $request->boolean('use_rewards', true);
+        $eventPayload = null;
         $isFirstPurchase = false;
-        $responseData    = null;
+        $responseData = null;
 
         try {
             DB::transaction(function () use ($request, $landId, $user, $useRewards, &$eventPayload, &$isFirstPurchase, &$responseData) {
@@ -96,6 +95,8 @@ class PurchaseController extends Controller
 
                 $reference = 'PUR-' . Str::uuid();
 
+                $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
+
                 // ── Mark discount reward as claimed ───────────────────────────
                 if ($discountRewardUsed) {
                     $discountRewardUsed->update(['claimed' => true, 'claimed_at' => now()]);
@@ -132,10 +133,9 @@ class PurchaseController extends Controller
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
-                $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
-
                 $actualAmountPaid = $rewardsUsed + $mainUsed;
 
+                // ── Upsert purchase record ────────────────────────────────────
                 DB::statement("
                     INSERT INTO purchases
                         (user_id, land_id, units, units_sold,
@@ -144,11 +144,11 @@ class PurchaseController extends Controller
                     VALUES (?, ?, ?, 0, ?, 0, 'active', ?, ?, NOW(), NOW())
                     ON CONFLICT (user_id, land_id)
                     DO UPDATE SET
-                        units                    = purchases.units + EXCLUDED.units,
-                        total_amount_paid_kobo   = purchases.total_amount_paid_kobo + EXCLUDED.total_amount_paid_kobo,
-                        reference                = EXCLUDED.reference,
-                        purchase_date            = EXCLUDED.purchase_date,
-                        updated_at               = NOW()
+                        units                  = purchases.units + EXCLUDED.units,
+                        total_amount_paid_kobo = purchases.total_amount_paid_kobo + EXCLUDED.total_amount_paid_kobo,
+                        reference              = EXCLUDED.reference,
+                        purchase_date          = EXCLUDED.purchase_date,
+                        updated_at             = NOW()
                 ", [
                     $user->id,
                     $land->id,
@@ -158,7 +158,7 @@ class PurchaseController extends Controller
                     $reference,
                 ]);
 
-                // ── Portfolio ─────────────────────────────────────────────────
+                // ── Upsert user_land ──────────────────────────────────────────
                 DB::statement("
                     INSERT INTO user_land (user_id, land_id, units, created_at, updated_at)
                     VALUES (?, ?, ?, NOW(), NOW())
@@ -180,7 +180,7 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                // ── Capture event data — dispatched AFTER commit ──────────────
+                // ── Capture event payload — dispatched AFTER commit ───────────
                 $eventPayload = [
                     'userId'       => $user->id,
                     'landId'       => $land->id,
@@ -199,7 +199,7 @@ class PurchaseController extends Controller
                     'paid_from_rewards_kobo' => $rewardsUsed,
                     'paid_from_wallet_kobo'  => $mainUsed,
                     'total_paid_kobo'        => $actualAmountPaid,
-                    'remaining_units'        => $land->available_units - $request->units,
+                    'remaining_units'        => $land->fresh()->available_units,
                 ];
             });
 
@@ -216,6 +216,7 @@ class PurchaseController extends Controller
             return response()->json(['error' => 'Purchase failed. Please try again.'], 500);
         }
 
+        // ── Post-commit: referral + event ─────────────────────────────────────
         if ($eventPayload) {
             try {
                 if ($isFirstPurchase) {
@@ -231,7 +232,6 @@ class PurchaseController extends Controller
                     $eventPayload['reference'],
                 ));
             } catch (\Throwable $e) {
-                // Notification/email failure must never affect the purchase response
                 Log::error('Post-purchase event dispatch failed', [
                     'reference' => $eventPayload['reference'],
                     'error'     => $e->getMessage(),
@@ -266,7 +266,9 @@ class PurchaseController extends Controller
                     ->firstOrFail();
 
                 if ($purchase->units < $request->units) {
-                    throw ValidationException::withMessages(['units' => 'Not enough units to sell.']);
+                    throw ValidationException::withMessages([
+                        'units' => 'Not enough units to sell.',
+                    ]);
                 }
 
                 $land = Land::with('latestPrice')->lockForUpdate()->findOrFail($landId);
@@ -326,7 +328,7 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                // ── Capture event data — dispatched AFTER commit ──────────────
+                // ── Capture event payload — dispatched AFTER commit ───────────
                 $eventPayload = [
                     'userId'        => $user->id,
                     'landId'        => $land->id,
@@ -341,7 +343,7 @@ class PurchaseController extends Controller
                     'reference'             => $reference,
                     'amount_received_kobo'  => $totalReceived,
                     'amount_received_naira' => $totalReceived / 100,
-                    'available_units'       => $land->available_units,
+                    'available_units'       => $land->fresh()->available_units,
                 ];
             });
 
@@ -357,7 +359,7 @@ class PurchaseController extends Controller
             return response()->json(['error' => 'Sale failed. Please try again.'], 500);
         }
 
-        // ── Dispatch events AFTER the transaction has committed ───────────────
+        // ── Dispatch event AFTER the transaction has committed ────────────────
         if ($eventPayload) {
             try {
                 event(new LandUnitsSold(

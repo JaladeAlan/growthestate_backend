@@ -15,13 +15,15 @@ class DepositConfirmed extends Notification implements ShouldQueue
     public int $tries   = 3;
     public int $backoff = 60;
 
-    protected int $amountKobo;
+    protected int    $amountKobo;
     protected string $reference;
+    protected string $date;
 
     public function __construct(int $amountKobo, string $reference = '')
     {
         $this->amountKobo = $amountKobo;
         $this->reference  = $reference;
+        $this->date       = now()->toFormattedDateString();
     }
 
     public function via($notifiable): array
@@ -31,18 +33,14 @@ class DepositConfirmed extends Notification implements ShouldQueue
 
     public function toMail($notifiable): MailMessage
     {
-        $amount  = number_format($this->amountKobo / 100, 2);
-        $appName = config('app.name');
-        $dashUrl = rtrim(config('app.frontend_url'), '/') . '/wallet';
-
         return (new MailMessage)
-            ->subject("Deposit Confirmed – ₦{$amount}")
-            ->greeting('Hello ' . $notifiable->name . '!')
-            ->line("Your deposit of ₦{$amount} was successfully processed.")
-            ->when($this->reference, fn ($m) => $m->line("**Reference:** {$this->reference}"))
-            ->action('View Wallet', $dashUrl)
-            ->line("Thank you for using {$appName}!")
-            ->salutation("Best regards, The {$appName} Team");
+            ->subject('Deposit Confirmed – &#x20A6;' . number_format($this->amountKobo / 100, 2))
+            ->view('emails.deposit_confirmed', [
+                'notifiable' => $notifiable,
+                'amountKobo' => $this->amountKobo,
+                'reference'  => $this->reference,
+                'date'       => $this->date,
+            ]);
     }
 
     public function toDatabase($notifiable): array
@@ -60,9 +58,6 @@ class DepositConfirmed extends Notification implements ShouldQueue
         return $this->toDatabase($notifiable);
     }
 
-    /**
-     * Handle notification delivery failure gracefully.
-     */
     public function failed(\Throwable $exception): void
     {
         Log::warning('DepositConfirmed notification delivery failed', [
