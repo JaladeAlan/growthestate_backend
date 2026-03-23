@@ -4,9 +4,10 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Support\Facades\Log;
 
 class DepositConfirmed extends Notification implements ShouldQueue
 {
@@ -15,7 +16,7 @@ class DepositConfirmed extends Notification implements ShouldQueue
     public int $tries   = 1;
     public int $backoff = 60;
 
-    protected int    $amountKobo;
+    protected int $amountKobo;
     protected string $reference;
     protected string $date;
 
@@ -31,10 +32,35 @@ class DepositConfirmed extends Notification implements ShouldQueue
         return ['database', 'mail'];
     }
 
+    public function toDatabase($notifiable): array
+    {
+        $key = 'notif:deposit:db:' . $this->reference;
+
+        $lock = Cache::lock($key, 120);
+
+        if (! $lock->get()) {
+            Log::info('DepositConfirmed duplicate prevented', [
+                'reference' => $this->reference,
+            ]);
+            return [];
+        }
+
+        try {
+            return [
+                'message'     => 'Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successful.',
+                'amount_kobo' => $this->amountKobo,
+                'reference'   => $this->reference,
+                'type'        => 'deposit',
+            ];
+        } finally {
+            $lock->release();
+        }
+    }
+
     public function toMail($notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Deposit Confirmed – &#x20A6;' . number_format($this->amountKobo / 100, 2))
+            ->subject('Deposit Confirmed – ₦' . number_format($this->amountKobo / 100, 2))
             ->view('emails.deposit_confirmed', [
                 'notifiable' => $notifiable,
                 'amountKobo' => $this->amountKobo,
@@ -43,19 +69,9 @@ class DepositConfirmed extends Notification implements ShouldQueue
             ]);
     }
 
-    public function toDatabase($notifiable): array
-    {
-        return [
-            'message'     => 'Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successful.',
-            'amount_kobo' => $this->amountKobo,
-            'reference'   => $this->reference,
-            'type'        => 'deposit',
-        ];
-    }
-
     public function failed(\Throwable $exception): void
     {
-        Log::warning('DepositConfirmed notification delivery failed', [
+        Log::warning('DepositConfirmed notification failed', [
             'reference' => $this->reference,
             'error'     => $exception->getMessage(),
         ]);

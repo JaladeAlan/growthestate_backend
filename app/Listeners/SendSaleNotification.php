@@ -30,7 +30,7 @@ class SendSaleNotification implements ShouldQueue
             $user = User::find($event->userId);
             if (! $user) return;
 
-            $transaction = Transaction::where('reference', $event->reference)->first();
+            $transaction = Transaction::where('reference', $event->reference)->firstOrFail();
             if (! $transaction) {
                 Log::warning('SendSaleNotification: transaction not found', [
                     'reference' => $event->reference,

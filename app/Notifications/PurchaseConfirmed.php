@@ -4,10 +4,11 @@ namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\BroadcastMessage;
-use Illuminate\Support\Facades\Log;
 
 class PurchaseConfirmed extends Notification implements ShouldQueue
 {
@@ -27,8 +28,8 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
             'reference'   => $transaction->reference ?? null,
             'land_title'  => $transaction->land?->title ?? null,
             'date'        => $transaction->transaction_date
-                             ? \Carbon\Carbon::parse($transaction->transaction_date)->toFormattedDateString()
-                             : now()->toFormattedDateString(),
+                ? \Carbon\Carbon::parse($transaction->transaction_date)->toFormattedDateString()
+                : now()->toFormattedDateString(),
         ];
     }
 
@@ -37,34 +38,38 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
         return ['database', 'broadcast', 'mail'];
     }
 
-    public function toMail($notifiable): MailMessage
-    {
-        $data = (object) array_merge($this->transactionData, [
-            'user' => $notifiable,
-            'land' => isset($this->transactionData['land_title'])
-                        ? (object) ['title' => $this->transactionData['land_title']]
-                        : null,
-        ]);
-
-        return (new MailMessage)
-            ->subject("Purchase Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
-            ->view('emails.purchase_confirmed', ['transaction' => $data]);
-    }
-
     public function toDatabase($notifiable): array
     {
-        return [
-            'purchase_id' => $this->transactionData['id'],
-            'units'       => $this->transactionData['units'],
-            'amount_kobo' => $this->transactionData['amount_kobo'],
-            'land_title'  => $this->transactionData['land_title'],
-            'reference'   => $this->transactionData['reference'],
-            'message'     => "Your purchase of {$this->transactionData['units']} unit(s) of "
-                             . ($this->transactionData['land_title'] ?? 'property')
-                             . " has been confirmed.",
-        ];
+        $key = 'notif:purchase:db:' . $this->transactionData['reference'];
+
+        $lock = Cache::lock($key, 120);
+
+        if (! $lock->get()) {
+            Log::info('PurchaseConfirmed duplicate DB notification prevented', [
+                'reference' => $this->transactionData['reference'],
+            ]);
+            return [];
+        }
+
+        try {
+            return [
+                'purchase_id' => $this->transactionData['id'],
+                'units'       => $this->transactionData['units'],
+                'amount_kobo' => $this->transactionData['amount_kobo'],
+                'land_title'  => $this->transactionData['land_title'],
+                'reference'   => $this->transactionData['reference'],
+                'message'     => "Your purchase of {$this->transactionData['units']} unit(s) of "
+                    . ($this->transactionData['land_title'] ?? 'property')
+                    . " has been confirmed.",
+            ];
+        } finally {
+            $lock->release();
+        }
     }
 
+    /**
+     * 📡 BROADCAST (optional lock if you want strict control)
+     */
     public function toBroadcast($notifiable): BroadcastMessage
     {
         return new BroadcastMessage([
@@ -78,10 +83,24 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
         ]);
     }
 
+    public function toMail($notifiable): MailMessage
+    {
+        $data = (object) array_merge($this->transactionData, [
+            'user' => $notifiable,
+            'land' => isset($this->transactionData['land_title'])
+                ? (object) ['title' => $this->transactionData['land_title']]
+                : null,
+        ]);
+
+        return (new MailMessage)
+            ->subject("Purchase Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
+            ->view('emails.purchase_confirmed', ['transaction' => $data]);
+    }
+
     public function failed(\Throwable $exception): void
     {
-        Log::warning('PurchaseConfirmed notification delivery failed', [
-            'reference' => $this->transactionData['reference'] ?? null,
+        Log::warning('PurchaseConfirmed notification failed', [
+            'reference' => $this->transactionData['reference'],
             'error'     => $exception->getMessage(),
         ]);
     }

@@ -30,7 +30,7 @@ class SendPurchaseNotification implements ShouldQueue
             $user = User::find($event->userId);
             if (! $user) return;
 
-            $transaction = Transaction::where('reference', $event->reference)->first();
+            $transaction = Transaction::where('reference', $event->reference)->firstOrFail();
             if (! $transaction) {
                 Log::warning('SendPurchaseNotification: transaction not found', [
                     'reference' => $event->reference,
