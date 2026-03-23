@@ -63,11 +63,6 @@ class WithdrawalFailedNotification extends Notification implements ShouldQueue
         ];
     }
 
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
-    }
-
     /**
      * Handle notification delivery failure gracefully.
      */

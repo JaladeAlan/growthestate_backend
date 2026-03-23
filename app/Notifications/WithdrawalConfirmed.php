@@ -74,11 +74,6 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
         ]);
     }
 
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
-    }
-
     public function failed(\Throwable $exception): void
     {
         Log::warning('WithdrawalConfirmed notification delivery failed', [

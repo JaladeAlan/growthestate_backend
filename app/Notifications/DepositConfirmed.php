@@ -53,11 +53,6 @@ class DepositConfirmed extends Notification implements ShouldQueue
         ];
     }
 
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
-    }
-
     public function failed(\Throwable $exception): void
     {
         Log::warning('DepositConfirmed notification delivery failed', [

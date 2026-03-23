@@ -38,10 +38,6 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
         // Only attempt mail if the mailer is not in a known-broken state.
         $channels = ['database', 'broadcast'];
 
-        // Skip mail in testing/local if you want, or always include it —
-        // the key fix is that mail failures are caught per-channel below.
-        $channels[] = 'mail';
-
         return $channels;
     }
 
@@ -58,7 +54,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
             ->subject("Purchase Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
             ->view('emails.purchase_confirmed', ['transaction' => $data]);
     }
-    
+
     public function toDatabase($notifiable): array
     {
         return [
@@ -84,11 +80,6 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
             'message'        => "Your purchase of {$this->transactionData['units']} unit(s) has been confirmed!",
             'timestamp'      => now(),
         ]);
-    }
-
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
     }
 
     public function failed(\Throwable $exception): void

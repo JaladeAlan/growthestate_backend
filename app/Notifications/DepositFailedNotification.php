@@ -62,12 +62,7 @@ class DepositFailedNotification extends Notification implements ShouldQueue
             'amount_kobo' => $this->depositData['amount_kobo'],
         ];
     }
-
-    public function toArray($notifiable): array
-    {
-        return $this->toDatabase($notifiable);
-    }
-
+    
     /**
      * Handle notification delivery failure gracefully.
      */
