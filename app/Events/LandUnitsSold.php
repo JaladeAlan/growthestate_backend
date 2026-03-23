@@ -8,9 +8,7 @@ use Illuminate\Queue\SerializesModels;
 class LandUnitsSold
 {
     use Dispatchable, SerializesModels;
-
-    public bool $dispatchAfterCommit = true;
-
+    
     public function __construct(
         public int $userId,
         public int $landId,

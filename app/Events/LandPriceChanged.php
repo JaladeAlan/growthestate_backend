@@ -9,8 +9,6 @@ class LandPriceChanged
 {
     use Dispatchable, SerializesModels;
 
-    public bool $dispatchAfterCommit = true;
-
     public function __construct(
         public int $landId,
         public int $pricePerUnitKobo,
