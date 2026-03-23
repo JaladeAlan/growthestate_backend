@@ -33,8 +33,12 @@ class PurchaseController extends Controller
 
         $useRewards = $request->boolean('use_rewards', true);
 
+        $eventPayload    = null;
+        $isFirstPurchase = false;
+        $responseData    = null;
+
         try {
-            return DB::transaction(function () use ($request, $landId, $user, $useRewards) {
+            DB::transaction(function () use ($request, $landId, $user, $useRewards, &$eventPayload, &$isFirstPurchase, &$responseData) {
 
                 $land = Land::with('latestPrice')->lockForUpdate()->findOrFail($landId);
 
@@ -176,23 +180,27 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                if ($isFirstPurchase) {
-                    $this->completeReferral($user);
-                }
+                // ── Capture event data — dispatched AFTER commit ──────────────
+                $eventPayload = [
+                    'userId'       => $user->id,
+                    'landId'       => $land->id,
+                    'units'        => $request->units,
+                    'pricePerUnit' => $pricePerUnit,
+                    'totalCost'    => $totalCost,
+                    'reference'    => $reference,
+                ];
 
-                event(new LandUnitsPurchased($user->id, $land->id, $request->units, $pricePerUnit, $totalCost));
-
-                return response()->json([
-                    'message'                   => 'Purchase successful.',
-                    'reference'                 => $reference,
-                    'original_cost_kobo'        => $totalCost,
-                    'discount_applied_kobo'     => $discountApplied,
-                    'discount_percent'          => $discountRewardUsed?->discount_percentage ?? 0,
-                    'paid_from_rewards_kobo'    => $rewardsUsed,
-                    'paid_from_wallet_kobo'     => $mainUsed,
-                    'total_paid_kobo'           => $actualAmountPaid,
-                    'remaining_units'           => $land->fresh()->available_units,
-                ]);
+                $responseData = [
+                    'message'                => 'Purchase successful.',
+                    'reference'              => $reference,
+                    'original_cost_kobo'     => $totalCost,
+                    'discount_applied_kobo'  => $discountApplied,
+                    'discount_percent'       => $discountRewardUsed?->discount_percentage ?? 0,
+                    'paid_from_rewards_kobo' => $rewardsUsed,
+                    'paid_from_wallet_kobo'  => $mainUsed,
+                    'total_paid_kobo'        => $actualAmountPaid,
+                    'remaining_units'        => $land->available_units - $request->units,
+                ];
             });
 
         } catch (ValidationException $e) {
@@ -207,6 +215,31 @@ class PurchaseController extends Controller
             ]);
             return response()->json(['error' => 'Purchase failed. Please try again.'], 500);
         }
+
+        if ($eventPayload) {
+            try {
+                if ($isFirstPurchase) {
+                    $this->completeReferral($user);
+                }
+
+                event(new LandUnitsPurchased(
+                    $eventPayload['userId'],
+                    $eventPayload['landId'],
+                    $eventPayload['units'],
+                    $eventPayload['pricePerUnit'],
+                    $eventPayload['totalCost'],
+                    $eventPayload['reference'],
+                ));
+            } catch (\Throwable $e) {
+                // Notification/email failure must never affect the purchase response
+                Log::error('Post-purchase event dispatch failed', [
+                    'reference' => $eventPayload['reference'],
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json($responseData);
     }
 
     /**
@@ -221,8 +254,11 @@ class PurchaseController extends Controller
             'units' => ['required', 'integer', 'min:1'],
         ]);
 
+        $eventPayload = null;
+        $responseData = null;
+
         try {
-            return DB::transaction(function () use ($request, $landId, $user) {
+            DB::transaction(function () use ($request, $landId, $user, &$eventPayload, &$responseData) {
 
                 $purchase = Purchase::where('user_id', $user->id)
                     ->where('land_id', $landId)
@@ -290,15 +326,23 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                event(new LandUnitsSold($user->id, $land->id, $request->units, $pricePerUnit, $totalReceived));
+                // ── Capture event data — dispatched AFTER commit ──────────────
+                $eventPayload = [
+                    'userId'        => $user->id,
+                    'landId'        => $land->id,
+                    'units'         => $request->units,
+                    'pricePerUnit'  => $pricePerUnit,
+                    'totalReceived' => $totalReceived,
+                    'reference'     => $reference,
+                ];
 
-                return response()->json([
+                $responseData = [
                     'message'               => 'Units sold successfully.',
                     'reference'             => $reference,
                     'amount_received_kobo'  => $totalReceived,
                     'amount_received_naira' => $totalReceived / 100,
                     'available_units'       => $land->available_units,
-                ]);
+                ];
             });
 
         } catch (ValidationException $e) {
@@ -312,6 +356,27 @@ class PurchaseController extends Controller
             ]);
             return response()->json(['error' => 'Sale failed. Please try again.'], 500);
         }
+
+        // ── Dispatch events AFTER the transaction has committed ───────────────
+        if ($eventPayload) {
+            try {
+                event(new LandUnitsSold(
+                    $eventPayload['userId'],
+                    $eventPayload['landId'],
+                    $eventPayload['units'],
+                    $eventPayload['pricePerUnit'],
+                    $eventPayload['totalReceived'],
+                    $eventPayload['reference'],
+                ));
+            } catch (\Throwable $e) {
+                Log::error('Post-sale event dispatch failed', [
+                    'reference' => $eventPayload['reference'],
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json($responseData);
     }
 
     /**

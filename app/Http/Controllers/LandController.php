@@ -91,12 +91,22 @@ class LandController extends Controller
     // GET /lands/{id}/units
     public function units(Land $land)
     {
+        $user = auth()->user();
+    
+        $userUnits = $user
+            ? (int) DB::table('user_land')
+                ->where('user_id', $user->id)
+                ->where('land_id', $land->id)
+                ->value('units')
+            : null;
+    
         return response()->json([
             'success' => true,
             'data'    => [
                 'total_units'     => $land->total_units,
                 'available_units' => $land->available_units,
                 'sold_units'      => $land->total_units - $land->available_units,
+                'user_units'      => $userUnits ?? 0,
             ],
         ]);
     }

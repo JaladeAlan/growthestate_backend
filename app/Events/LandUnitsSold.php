@@ -16,6 +16,7 @@ class LandUnitsSold
         public int $landId,
         public int $units,
         public int $pricePerUnitKobo,
-        public int $totalReceived
+        public int $totalReceived,
+        public string $reference,
     ) {}
 }

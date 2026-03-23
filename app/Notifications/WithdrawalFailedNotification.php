@@ -5,67 +5,77 @@ namespace App\Notifications;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Notifications\Messages\BroadcastMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Support\Facades\Log;
 use App\Models\Withdrawal;
 
 class WithdrawalFailedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    protected $withdrawal;
+    public int $tries   = 3;
+    public int $backoff = 60;
+
+    protected array $withdrawalData;
 
     public function __construct(Withdrawal $withdrawal)
     {
-        $this->withdrawal = $withdrawal;
-    }
-
-    public function via($notifiable)
-    {
-        return ['mail', 'database', 'broadcast'];
-    }
-
-    public function toMail($notifiable)
-    {
-        $amount = number_format(($this->withdrawal->amount_kobo ?? 0) / 100, 2);
-
-        return (new MailMessage)
-            ->subject('Withdrawal Failed')
-            ->greeting('Hello ' . $notifiable->name . ',')
-            ->line("Your withdrawal request of ₦{$amount} has failed.")
-            ->line('Please try again or contact support.')
-            ->action('View Withdrawals', url('/withdrawals'))
-            ->line('Thank you for using our service.');
-    }
-
-    public function toDatabase($notifiable)
-    {
-        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
-
-        return [
-            'message' => 'Your withdrawal request of ₦' . number_format($amountKobo / 100, 2) . ' has failed.',
-            'reference' => $this->withdrawal->reference ?? null,
-            'amount_kobo' => $amountKobo,
-            'status' => 'failed',
-            'failed_at' => now(),
+        $this->withdrawalData = [
+            'id'          => $withdrawal->id,
+            'reference'   => $withdrawal->reference,
+            'amount_kobo' => $withdrawal->amount_kobo,
         ];
     }
 
-    public function toBroadcast($notifiable)
+    public function via($notifiable): array
     {
-        $amountKobo = $this->withdrawal->amount_kobo ?? 0;
-
-        return new BroadcastMessage([
-            'message' => 'Your withdrawal request of ₦' . number_format($amountKobo / 100, 2) . ' has failed.',
-            'reference' => $this->withdrawal->reference ?? null,
-            'amount_kobo' => $amountKobo,
-            'status' => 'failed',
-            'failed_at' => now(),
-        ]);
+        return ['database', 'mail'];
     }
 
-    public function toArray($notifiable)
+    public function toMail($notifiable): MailMessage
+    {
+        $amount    = number_format($this->withdrawalData['amount_kobo'] / 100, 2);
+        $ref       = $this->withdrawalData['reference'];
+        $appName   = config('app.name');
+        $walletUrl = rtrim(config('app.frontend_url'), '/') . '/wallet';
+
+        return (new MailMessage)
+            ->subject("Withdrawal Failed – ₦{$amount}")
+            ->greeting('Hello ' . $notifiable->name . ',')
+            ->line("Unfortunately your withdrawal could not be processed.")
+            ->line("**Amount:** ₦{$amount}")
+            ->line("**Reference:** {$ref}")
+            ->line("The funds have been returned to your wallet.")
+            ->action('View Wallet', $walletUrl)
+            ->line("Please check your bank details and try again. If the problem persists, contact support.")
+            ->salutation("Best regards, The {$appName} Team");
+    }
+
+    public function toDatabase($notifiable): array
+    {
+        return [
+            'withdrawal_id' => $this->withdrawalData['id'],
+            'amount_kobo'   => $this->withdrawalData['amount_kobo'],
+            'reference'     => $this->withdrawalData['reference'],
+            'message'       => "Your withdrawal of ₦"
+                               . number_format($this->withdrawalData['amount_kobo'] / 100, 2)
+                               . " failed. The funds have been returned to your wallet.",
+        ];
+    }
+
+    public function toArray($notifiable): array
     {
         return $this->toDatabase($notifiable);
+    }
+
+    /**
+     * Handle notification delivery failure gracefully.
+     */
+    public function failed(\Throwable $exception): void
+    {
+        Log::warning('WithdrawalFailedNotification delivery failed', [
+            'reference' => $this->withdrawalData['reference'] ?? null,
+            'error'     => $exception->getMessage(),
+        ]);
     }
 }

@@ -3,61 +3,71 @@
 namespace App\Notifications;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\Messages\MailMessage;
-use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Log;
 
 class DepositConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    protected $amountKobo;
+    public int $tries   = 3;
+    public int $backoff = 60;
 
-    public function __construct(int $amountKobo)
+    protected int $amountKobo;
+    protected string $reference;
+
+    public function __construct(int $amountKobo, string $reference = '')
     {
         $this->amountKobo = $amountKobo;
+        $this->reference  = $reference;
     }
 
-    /**
-     * Delivery channels
-     */
-    public function via($notifiable)
+    public function via($notifiable): array
     {
-        return ['mail', 'database']; 
+        return ['database', 'mail'];
     }
 
-    /**
-     * Email representation
-     */
-    public function toMail($notifiable)
+    public function toMail($notifiable): MailMessage
     {
+        $amount  = number_format($this->amountKobo / 100, 2);
+        $appName = config('app.name');
+        $dashUrl = rtrim(config('app.frontend_url'), '/') . '/wallet';
+
         return (new MailMessage)
-            ->subject('Deposit Confirmation')
+            ->subject("Deposit Confirmed – ₦{$amount}")
             ->greeting('Hello ' . $notifiable->name . '!')
-            ->line('Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successfully processed.')
-            ->action('View Account', url('/account'))
-            ->line('Thank you for using our application!')
-            ->salutation('Best regards, ' . config('app.name'));
+            ->line("Your deposit of ₦{$amount} was successfully processed.")
+            ->when($this->reference, fn ($m) => $m->line("**Reference:** {$this->reference}"))
+            ->action('View Wallet', $dashUrl)
+            ->line("Thank you for using {$appName}!")
+            ->salutation("Best regards, The {$appName} Team");
     }
 
-    /**
-     * Database representation
-     */
-    public function toDatabase($notifiable)
+    public function toDatabase($notifiable): array
     {
         return [
-            'message' => 'Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successful.',
+            'message'     => 'Your deposit of ₦' . number_format($this->amountKobo / 100, 2) . ' was successful.',
             'amount_kobo' => $this->amountKobo,
-            'type' => 'deposit',
-            'created_at' => now(),
+            'reference'   => $this->reference,
+            'type'        => 'deposit',
         ];
     }
 
-    /**
-     * Array fallback
-     */
-    public function toArray($notifiable)
+    public function toArray($notifiable): array
     {
         return $this->toDatabase($notifiable);
+    }
+
+    /**
+     * Handle notification delivery failure gracefully.
+     */
+    public function failed(\Throwable $exception): void
+    {
+        Log::warning('DepositConfirmed notification delivery failed', [
+            'reference' => $this->reference,
+            'error'     => $exception->getMessage(),
+        ]);
     }
 }
