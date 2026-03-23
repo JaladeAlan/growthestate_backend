@@ -12,15 +12,19 @@ use Illuminate\Support\Facades\Log;
 
 class SendPurchaseNotification implements ShouldQueue
 {
-    public int $tries   = 1; 
-    public int $backoff = 60;
+    public int $tries = 3;
+
+    public function backoff(): array
+    {
+        return [10, 60, 120];
+    }
 
     public function handle(LandUnitsPurchased $event): void
     {
-        $lock = Cache::lock('notif:purchase:' . $event->reference, 120);
+        $key = 'event:purchase:' . $event->reference;
 
-        if (! $lock->get()) {
-            Log::info('SendPurchaseNotification: duplicate suppressed', [
+        if (! Cache::add($key, true, 300)) {
+            Log::info('Duplicate purchase event skipped', [
                 'reference' => $event->reference,
             ]);
             return;
@@ -28,30 +32,32 @@ class SendPurchaseNotification implements ShouldQueue
 
         try {
             $user = User::find($event->userId);
-            if (! $user) return;
 
-            $transaction = Transaction::where('reference', $event->reference)->firstOrFail();
+            if (! $user) {
+                Log::warning('User not found', [
+                    'user_id' => $event->userId,
+                ]);
+                return;
+            }
+
+            $transaction = Transaction::where('reference', $event->reference)->first();
+
             if (! $transaction) {
-                Log::warning('SendPurchaseNotification: transaction not found', [
+                Log::warning('Transaction not found', [
                     'reference' => $event->reference,
-                    'user_id'   => $event->userId,
                 ]);
                 return;
             }
 
             $user->notify(new PurchaseConfirmed($transaction));
 
-        } finally {
-            $lock->release();
-        }
-    }
+        } catch (\Throwable $e) {
+            Cache::forget($key);
+            Log::error('SendPurchaseNotification failed', [
+                'error' => $e->getMessage(),
+            ]);
 
-    public function failed(LandUnitsPurchased $event, \Throwable $exception): void
-    {
-        Log::error('SendPurchaseNotification: failed', [
-            'reference' => $event->reference,
-            'user_id'   => $event->userId,
-            'error'     => $exception->getMessage(),
-        ]);
+            throw $e;
+        }
     }
 }

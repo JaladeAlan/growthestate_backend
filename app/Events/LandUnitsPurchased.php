@@ -9,6 +9,8 @@ class LandUnitsPurchased
 {
     use Dispatchable, SerializesModels;
 
+    public bool $dispatchAfterCommit = true;
+
     public function __construct(
         public int $userId,
         public int $landId,
