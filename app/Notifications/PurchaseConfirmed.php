@@ -13,7 +13,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries   = 3;
+    public int $tries   = 1;
     public int $backoff = 60;
 
     protected array $transactionData;
@@ -34,11 +34,7 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        // Always send database + broadcast.
-        // Only attempt mail if the mailer is not in a known-broken state.
-        $channels = ['database', 'broadcast'];
-
-        return $channels;
+        return ['database', 'broadcast', 'mail'];
     }
 
     public function toMail($notifiable): MailMessage

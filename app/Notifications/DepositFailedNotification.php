@@ -13,7 +13,7 @@ class DepositFailedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries   = 3;
+    public int $tries   = 1;
     public int $backoff = 60;
 
     protected array $depositData;
@@ -62,7 +62,7 @@ class DepositFailedNotification extends Notification implements ShouldQueue
             'amount_kobo' => $this->depositData['amount_kobo'],
         ];
     }
-    
+
     /**
      * Handle notification delivery failure gracefully.
      */

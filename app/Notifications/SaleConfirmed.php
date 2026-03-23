@@ -13,7 +13,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries   = 3;
+    public int $tries   = 1;
     public int $backoff = 60;
 
     protected array $transactionData;

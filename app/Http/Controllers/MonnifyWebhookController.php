@@ -120,6 +120,11 @@ class MonnifyWebhookController extends Controller
                 'reference'     => $lockedDeposit->reference,
                 'created_at'    => now(),
             ]);
+
+            $user->notify(new \App\Notifications\DepositConfirmed(
+                $deposit->amount_kobo,
+                $deposit->reference
+            ));
         });
 
         return response()->json(['status' => 'processed']);

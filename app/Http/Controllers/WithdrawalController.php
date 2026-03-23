@@ -243,20 +243,32 @@ class WithdrawalController extends Controller
     protected function simulateTestWithdrawal(string $referenceCode)
     {
         $withdrawal = Withdrawal::firstWhere('reference', $referenceCode);
-
-        if ($withdrawal && ! in_array($withdrawal->status, ['completed', 'failed'], true)) {
-            DB::transaction(function () use ($withdrawal) {
-                $withdrawal->update(['status' => 'completed']);
-                try { $withdrawal->user->notify(new WithdrawalConfirmed($withdrawal)); } catch (\Exception) {}
-            });
+    
+        if (! $withdrawal || in_array($withdrawal->status, ['completed', 'failed'], true)) {
+            return response()->json([
+                'message'   => 'Test mode withdrawal successful.',
+                'reference' => $referenceCode,
+            ]);
         }
-
+    
+        DB::transaction(function () use ($withdrawal) {
+            $locked = Withdrawal::lockForUpdate()->find($withdrawal->id);
+    
+            // Re-check inside the lock
+            if (in_array($locked->status, ['completed', 'failed'], true)) {
+                return;
+            }
+    
+            $locked->update(['status' => 'completed']);
+            try { $locked->user->notify(new WithdrawalConfirmed($locked)); } catch (\Exception) {}
+        });
+    
         return response()->json([
             'message'   => 'Test mode withdrawal successful.',
             'reference' => $referenceCode,
         ]);
     }
-
+    
     protected function initiatePaystackTransfer($user, int $amountKobo, string $referenceCode)
     {
         $recipientCode = $user->recipient_code ?? $this->createPaystackRecipient($user);

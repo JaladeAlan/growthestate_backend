@@ -103,6 +103,11 @@ class PaystackWebhookController extends Controller
                 'amount_kobo'  => $deposit->amount_kobo,
                 'balance_after' => $balanceAfter,
             ]);
+
+            $user->notify(new \App\Notifications\DepositConfirmed(
+                $deposit->amount_kobo,
+                $deposit->reference
+            ));
         });
     }
 }
