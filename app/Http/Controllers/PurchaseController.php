@@ -10,7 +10,6 @@ use App\Models\Purchase;
 use App\Models\Referral;
 use App\Models\ReferralReward;
 use App\Models\Transaction;
-use App\Models\User;
 use App\Models\UserLand;
 use App\Services\RewardsService;
 use Illuminate\Http\Request;
@@ -22,6 +21,87 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseController extends Controller
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    // PURCHASE PREVIEW
+    // GET /lands/{landId}/purchase/preview?units=N&use_rewards=1
+    // ─────────────────────────────────────────────────────────────────────────
+    public function preview(Request $request, $landId)
+    {
+        $user = JWTAuth::parseToken()->authenticate();
+
+        $request->validate([
+            'units'       => ['required', 'integer', 'min:1'],
+            'use_rewards' => ['sometimes', 'boolean'],
+        ]);
+
+        $useRewards = $request->boolean('use_rewards', true);
+        $land       = Land::with('latestPrice')->findOrFail($landId);
+
+        $pricePerUnit = $land->current_price_per_unit_kobo;
+
+        if ($pricePerUnit <= 0) {
+            return response()->json(['error' => 'This property has no price set.'], 422);
+        }
+
+        $units     = (int) $request->units;
+        $totalCost = $pricePerUnit * $units;
+
+        [
+            $discountApplied,
+            $discountLabel,
+            $discountPercent,
+            $firstPurchaseDiscount,
+            $referralDiscount,
+        ] = $this->calculateDiscount($user, $totalCost, $useRewards);
+
+        $afterDiscount = $totalCost - $discountApplied;
+        $rewardsUsed   = 0;
+
+        if ($useRewards && $user->rewards_balance_kobo > 0) {
+            $rewardsUsed = min($user->rewards_balance_kobo, $afterDiscount);
+        }
+
+        $mainUsed = $afterDiscount - $rewardsUsed;
+
+        return response()->json([
+            'data' => [
+                'units'                         => $units,
+                'price_per_unit_kobo'           => $pricePerUnit,
+                'price_per_unit_naira'          => $pricePerUnit / 100,
+                'original_cost_kobo'            => $totalCost,
+                'original_cost_naira'           => $totalCost / 100,
+
+                'first_purchase_discount_kobo'  => $firstPurchaseDiscount,
+                'first_purchase_discount_naira' => $firstPurchaseDiscount / 100,
+                'referral_discount_kobo'        => $referralDiscount,
+                'referral_discount_naira'       => $referralDiscount / 100,
+                'total_discount_kobo'           => $discountApplied,
+                'total_discount_naira'          => $discountApplied / 100,
+                'discount_percent'              => $discountPercent,
+                'discount_label'                => $discountLabel,
+
+                'rewards_balance_kobo'          => $user->rewards_balance_kobo,
+                'rewards_balance_naira'         => $user->rewards_balance_kobo / 100,
+                'paid_from_rewards_kobo'        => $rewardsUsed,
+                'paid_from_rewards_naira'       => $rewardsUsed / 100,
+                'paid_from_wallet_kobo'         => $mainUsed,
+                'paid_from_wallet_naira'        => $mainUsed / 100,
+
+                'total_due_kobo'                => $mainUsed,
+                'total_due_naira'               => $mainUsed / 100,
+
+                'sufficient_balance'            => $user->balance_kobo >= $mainUsed,
+                'available_units'               => $land->available_units,
+                'is_first_purchase'             => ! Purchase::where('user_id', $user->id)->exists(),
+                'use_rewards'                   => $useRewards,
+            ],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PURCHASE
+    // POST /lands/{landId}/purchase
+    // ─────────────────────────────────────────────────────────────────────────
     public function purchase(Request $request, $landId)
     {
         $user = JWTAuth::parseToken()->authenticate();
@@ -31,10 +111,10 @@ class PurchaseController extends Controller
             'use_rewards' => ['sometimes', 'boolean'],
         ]);
 
-        $useRewards   = $request->boolean('use_rewards', true);
-        $eventPayload = null;
+        $useRewards      = $request->boolean('use_rewards', true);
+        $eventPayload    = null;
         $isFirstPurchase = false;
-        $responseData = null;
+        $responseData    = null;
 
         try {
             DB::transaction(function () use ($request, $landId, $user, $useRewards, &$eventPayload, &$isFirstPurchase, &$responseData) {
@@ -57,27 +137,21 @@ class PurchaseController extends Controller
 
                 $totalCost = $pricePerUnit * $request->units;
 
-                // ── Step 1: Apply discount reward if available ────────────────
-                $discountApplied    = 0;
-                $discountRewardUsed = null;
+                $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
 
-                if ($useRewards) {
-                    $discountReward = ReferralReward::where('user_id', $user->id)
-                        ->where('reward_type', 'discount')
-                        ->where('claimed', false)
-                        ->whereNotNull('discount_percentage')
-                        ->lockForUpdate()
-                        ->first();
-
-                    if ($discountReward) {
-                        $discountApplied    = (int) floor($totalCost * ($discountReward->discount_percentage / 100));
-                        $discountRewardUsed = $discountReward;
-                    }
-                }
+                // ── Discounts ─────────────────────────────────────────────────
+                [
+                    $discountApplied,
+                    $discountLabel,
+                    $discountPercent,
+                    $firstPurchaseDiscount,
+                    $referralDiscount,
+                    $discountRewardUsed,
+                ] = $this->calculateDiscount($user, $totalCost, $useRewards, lockReward: true);
 
                 $afterDiscount = $totalCost - $discountApplied;
 
-                // ── Step 2: Apply rewards balance ─────────────────────────────
+                // ── Rewards balance offset ────────────────────────────────────
                 $rewardsUsed = 0;
                 $mainUsed    = $afterDiscount;
 
@@ -86,7 +160,7 @@ class PurchaseController extends Controller
                     $mainUsed    = $afterDiscount - $rewardsUsed;
                 }
 
-                // ── Step 3: Check main wallet covers remainder ────────────────
+                // ── Main wallet check ─────────────────────────────────────────
                 if ($user->balance_kobo < $mainUsed) {
                     throw ValidationException::withMessages([
                         'wallet' => 'Insufficient wallet balance.',
@@ -95,17 +169,23 @@ class PurchaseController extends Controller
 
                 $reference = 'PUR-' . Str::uuid();
 
-                $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
-
-                // ── Mark discount reward as claimed ───────────────────────────
+                // ── Claim referral discount reward row if used ────────────────
                 if ($discountRewardUsed) {
                     $discountRewardUsed->update(['claimed' => true, 'claimed_at' => now()]);
-                    Log::info('Discount reward applied at checkout', [
+                    Log::info('Referral discount applied at checkout', [
                         'user_id'          => $user->id,
                         'reward_id'        => $discountRewardUsed->id,
-                        'discount_kobo'    => $discountApplied,
+                        'discount_kobo'    => $referralDiscount,
                         'discount_percent' => $discountRewardUsed->discount_percentage,
                         'reference'        => $reference,
+                    ]);
+                }
+
+                if ($firstPurchaseDiscount > 0) {
+                    Log::info('First-purchase discount applied', [
+                        'user_id'       => $user->id,
+                        'discount_kobo' => $firstPurchaseDiscount,
+                        'reference'     => $reference,
                     ]);
                 }
 
@@ -180,7 +260,6 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                // ── Capture event payload — dispatched AFTER commit ───────────
                 $eventPayload = [
                     'userId'       => $user->id,
                     'landId'       => $land->id,
@@ -191,15 +270,26 @@ class PurchaseController extends Controller
                 ];
 
                 $responseData = [
-                    'message'                => 'Purchase successful.',
-                    'reference'              => $reference,
-                    'original_cost_kobo'     => $totalCost,
-                    'discount_applied_kobo'  => $discountApplied,
-                    'discount_percent'       => $discountRewardUsed?->discount_percentage ?? 0,
-                    'paid_from_rewards_kobo' => $rewardsUsed,
-                    'paid_from_wallet_kobo'  => $mainUsed,
-                    'total_paid_kobo'        => $actualAmountPaid,
-                    'remaining_units'        => $land->fresh()->available_units,
+                    'message'                       => 'Purchase successful.',
+                    'reference'                     => $reference,
+                    'units'                         => $request->units,
+                    'original_cost_kobo'            => $totalCost,
+                    'original_cost_naira'           => $totalCost / 100,
+                    'first_purchase_discount_kobo'  => $firstPurchaseDiscount,
+                    'first_purchase_discount_naira' => $firstPurchaseDiscount / 100,
+                    'referral_discount_kobo'        => $referralDiscount,
+                    'referral_discount_naira'       => $referralDiscount / 100,
+                    'total_discount_kobo'           => $discountApplied,
+                    'total_discount_naira'          => $discountApplied / 100,
+                    'discount_percent'              => $discountPercent,
+                    'discount_label'                => $discountLabel,
+                    'paid_from_rewards_kobo'        => $rewardsUsed,
+                    'paid_from_rewards_naira'       => $rewardsUsed / 100,
+                    'paid_from_wallet_kobo'         => $mainUsed,
+                    'paid_from_wallet_naira'        => $mainUsed / 100,
+                    'total_paid_kobo'               => $actualAmountPaid,
+                    'total_paid_naira'              => $actualAmountPaid / 100,
+                    'remaining_units'               => $land->fresh()->available_units,
                 ];
             });
 
@@ -216,7 +306,6 @@ class PurchaseController extends Controller
             return response()->json(['error' => 'Purchase failed. Please try again.'], 500);
         }
 
-        // ── Post-commit: referral + event ─────────────────────────────────────
         if ($eventPayload) {
             try {
                 if ($isFirstPurchase) {
@@ -242,10 +331,10 @@ class PurchaseController extends Controller
         return response()->json($responseData);
     }
 
-    /**
-     * SELL LAND UNITS
-     * Sale proceeds go to the main wallet.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // SELL
+    // POST /lands/{landId}/sell
+    // ─────────────────────────────────────────────────────────────────────────
     public function sellUnits(Request $request, $landId)
     {
         $user = JWTAuth::parseToken()->authenticate();
@@ -294,12 +383,10 @@ class PurchaseController extends Controller
                     'reference'                  => $reference,
                 ]);
 
-                // ── Update land ───────────────────────────────────────────────
                 $land->increment('available_units', $request->units);
                 $land->is_available = true;
                 $land->save();
 
-                // ── Credit main wallet ────────────────────────────────────────
                 $user->increment('balance_kobo', $totalReceived);
                 $balanceAfter = $user->fresh()->balance_kobo;
 
@@ -311,12 +398,10 @@ class PurchaseController extends Controller
                     'reference'     => $reference,
                 ]);
 
-                // ── Update portfolio ──────────────────────────────────────────
                 UserLand::where('user_id', $user->id)
                     ->where('land_id', $land->id)
                     ->decrement('units', $request->units);
 
-                // ── Transaction log ───────────────────────────────────────────
                 Transaction::create([
                     'user_id'          => $user->id,
                     'land_id'          => $land->id,
@@ -328,7 +413,6 @@ class PurchaseController extends Controller
                     'transaction_date' => now(),
                 ]);
 
-                // ── Capture event payload — dispatched AFTER commit ───────────
                 $eventPayload = [
                     'userId'        => $user->id,
                     'landId'        => $land->id,
@@ -359,7 +443,6 @@ class PurchaseController extends Controller
             return response()->json(['error' => 'Sale failed. Please try again.'], 500);
         }
 
-        // ── Dispatch event AFTER the transaction has committed ────────────────
         if ($eventPayload) {
             try {
                 event(new LandUnitsSold(
@@ -381,9 +464,50 @@ class PurchaseController extends Controller
         return response()->json($responseData);
     }
 
-    /**
-     * Complete a referral when the referred user makes their first purchase.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // DISCOUNT CALCULATOR
+    // ─────────────────────────────────────────────────────────────────────────
+    private function calculateDiscount(
+        $user,
+        int $totalCost,
+        bool $useRewards,
+        bool $lockReward = false
+    ): array {
+        if (! $useRewards) {
+            return [0, null, 0, 0, 0, null];
+        }
+
+        $isFirst = ! Purchase::where('user_id', $user->id)->exists();
+
+        // ── 1. First-purchase discount ────────────────────────────────────────
+        if ($isFirst) {
+            $percent = (int) config('rewards.first_purchase_discount_percent', 0);
+            if ($percent > 0) {
+                $kobo = (int) floor($totalCost * ($percent / 100));
+                return [$kobo, "First purchase ({$percent}% off)", $percent, $kobo, 0, null];
+            }
+        }
+
+        // ── 2. Referral discount reward ───────────────────────────────────────
+        $query = ReferralReward::where('user_id', $user->id)
+            ->where('reward_type', 'discount')
+            ->where('claimed', false)
+            ->whereNotNull('discount_percentage');
+
+        $row = $lockReward ? $query->lockForUpdate()->first() : $query->first();
+
+        if ($row) {
+            $percent = $row->discount_percentage;
+            $kobo    = (int) floor($totalCost * ($percent / 100));
+            return [$kobo, "Referral discount ({$percent}% off)", $percent, 0, $kobo, $row];
+        }
+
+        return [0, null, 0, 0, 0, null];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // COMPLETE REFERRAL
+    // ─────────────────────────────────────────────────────────────────────────
     private function completeReferral($referredUser): void
     {
         $referral = Referral::where('referred_user_id', $referredUser->id)

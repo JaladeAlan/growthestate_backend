@@ -91,6 +91,7 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
         Route::get('/lands/{land}/units', [LandController::class, 'units']);
 
         // Purchases & sales
+        Route::get('/lands/{landId}/purchase/preview', [PurchaseController::class, 'preview']);
         Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase'])->middleware('check.pin');
         Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits'])->middleware('check.pin');
 
