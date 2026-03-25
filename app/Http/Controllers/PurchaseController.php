@@ -467,6 +467,13 @@ class PurchaseController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // DISCOUNT CALCULATOR
     // ─────────────────────────────────────────────────────────────────────────
+    /**
+     * Returns [discountKobo, label, effectivePercent, firstPurchaseKobo, referralKobo, rewardRow|null]
+
+     * rewards.max_discount_kobo (int, kobo)
+     *   0  → no cap
+     *   N  → the final discount for either scheme is clamped to N kobo
+     */
     private function calculateDiscount(
         $user,
         int $totalCost,
@@ -477,14 +484,39 @@ class PurchaseController extends Controller
             return [0, null, 0, 0, 0, null];
         }
 
+        // Shared absolute ceiling — 0 means unlimited
+        $maxDiscountKobo = (int) config('rewards.max_discount_kobo', 500000);
+
+        /**
+         * Clamp a raw kobo discount to the ceiling and return
+         * [cappedKobo, wasCapped].
+         */
+        $applyCap = function (int $rawKobo) use ($maxDiscountKobo): array {
+            if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
+                return [$maxDiscountKobo, true];
+            }
+            return [$rawKobo, false];
+        };
+
         $isFirst = ! Purchase::where('user_id', $user->id)->exists();
 
         // ── 1. First-purchase discount ────────────────────────────────────────
         if ($isFirst) {
             $percent = (int) config('rewards.first_purchase_discount_percent', 0);
             if ($percent > 0) {
-                $kobo = (int) floor($totalCost * ($percent / 100));
-                return [$kobo, "First purchase ({$percent}% off)", $percent, $kobo, 0, null];
+                $rawKobo = (int) floor($totalCost * ($percent / 100));
+
+                [$kobo, $wasCapped] = $applyCap($rawKobo);
+
+                $effectivePercent = $totalCost > 0
+                    ? round(($kobo / $totalCost) * 100, 2)
+                    : $percent;
+
+                $label = $wasCapped
+                    ? "First purchase (capped at ₦" . number_format($maxDiscountKobo / 100) . " off)"
+                    : "First purchase ({$percent}% off)";
+
+                return [$kobo, $label, $effectivePercent, $kobo, 0, null];
             }
         }
 
@@ -498,8 +530,19 @@ class PurchaseController extends Controller
 
         if ($row) {
             $percent = $row->discount_percentage;
-            $kobo    = (int) floor($totalCost * ($percent / 100));
-            return [$kobo, "Referral discount ({$percent}% off)", $percent, 0, $kobo, $row];
+            $rawKobo = (int) floor($totalCost * ($percent / 100));
+
+            [$kobo, $wasCapped] = $applyCap($rawKobo);
+
+            $effectivePercent = $totalCost > 0
+                ? round(($kobo / $totalCost) * 100, 2)
+                : $percent;
+
+            $label = $wasCapped
+                ? "Referral discount (capped at ₦" . number_format($maxDiscountKobo / 100) . " off)"
+                : "Referral discount ({$percent}% off)";
+
+            return [$kobo, $label, $effectivePercent, 0, $kobo, $row];
         }
 
         return [0, null, 0, 0, 0, null];

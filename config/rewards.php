@@ -25,4 +25,5 @@ return [
     */
     'first_purchase_discount_percent' => (int) env('REWARD_FIRST_PURCHASE_DISCOUNT_PERCENT', 0),
 
+    'max_discount_kobo' => env('REWARDS_MAX_DISCOUNT_KOBO', 500000),
 ];
