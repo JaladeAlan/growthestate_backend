@@ -47,8 +47,6 @@ Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTick
 
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
-// Route::post('/opay/webhook',     [App\Http\Controllers\OpayWebhookController::class, 'handle'])
-//      ->name('opay.webhook');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTHENTICATED (JWT required, account must not be suspended)
@@ -105,13 +103,13 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
         });
 
         // Deposits
-        Route::post('/deposit',                      [DepositController::class, 'initiateDeposit']);
-        Route::get('/paystack/banks',                [DepositController::class, 'banks']);
-        Route::post('/paystack/resolve-account',     [DepositController::class, 'resolveAccount']);
+        Route::post('/deposit',                  [DepositController::class, 'initiateDeposit']);
+        Route::get('/paystack/banks',            [DepositController::class, 'banks']);
+        Route::post('/paystack/resolve-account', [DepositController::class, 'resolveAccount']);
 
         // Withdrawals
-        Route::post('/withdraw',                [WithdrawalController::class, 'requestWithdrawal'])->middleware('check.pin');
-        Route::get('/withdrawals/{reference}',  [WithdrawalController::class, 'getWithdrawalStatus']);
+        Route::post('/withdraw',               [WithdrawalController::class, 'requestWithdrawal'])->middleware('check.pin');
+        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // KYC
         Route::get('/kyc/status',                 [KycController::class, 'status']);
@@ -146,43 +144,48 @@ Route::middleware(['jwt.auth', 'suspended'])->group(function () {
         // ─────────────────────────────────────────────────────────────────
         Route::middleware('admin')->prefix('admin')->group(function () {
 
-            // Lands
+            // ── Lands ─────────────────────────────────────────────────────
             Route::get('/lands',                       [LandController::class, 'adminIndex']);
             Route::post('/lands',                      [LandController::class, 'store']);
+            Route::get('/lands/{land}',                [LandController::class, 'show']);
             Route::post('/lands/{land}',               [LandController::class, 'update']);
             Route::patch('/lands/{land}/price',        [LandController::class, 'updatePrice']);
             Route::patch('/lands/{land}/availability', [LandController::class, 'toggleAvailability']);
+            Route::get('/lands/{land}/valuation',                        [LandController::class, 'getValuations']);
+            Route::post('/lands/{land}/valuation',                       [LandController::class, 'addValuationEntry']);
+            Route::patch('/lands/{land}/valuation/{year}/{month}',       [LandController::class, 'updateValuationEntry']);
+            Route::delete('/lands/{land}/valuation/{year}/{month}',      [LandController::class, 'deleteValuationEntry']);
 
-            // KYC
+            // ── KYC ───────────────────────────────────────────────────────
             Route::get('/kyc',                    [KycController::class, 'adminIndex']);
             Route::get('/kyc/{id}',               [KycController::class, 'adminShow']);
             Route::post('/kyc/{id}/approve',      [KycController::class, 'adminApprove']);
             Route::post('/kyc/{id}/reject',       [KycController::class, 'adminReject']);
             Route::post('/kyc/{id}/resubmit',     [KycController::class, 'adminRequestResubmit']);
 
-            // Referrals
+            // ── Referrals ─────────────────────────────────────────────────
             Route::get('/referrals',       [ReferralController::class, 'adminIndex']);
             Route::get('/referrals/stats', [ReferralController::class, 'adminStats']);
 
-            // Withdrawals
+            // ── Withdrawals ───────────────────────────────────────────────
             Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
 
-            // Users
-            Route::patch('/users/{user}/suspend',   [AdminUserController::class, 'suspend']);
-            Route::patch('/users/{user}/unsuspend', [AdminUserController::class, 'unsuspend']);
-            Route::get('/users',                      [AdminUserController::class, 'index']);
-            Route::get('/users/{user}',               [AdminUserController::class, 'show']);
-            Route::patch('/users/{user}/make-admin',  [AdminUserController::class, 'makeAdmin']);
-            Route::patch('/users/{user}/remove-admin',[AdminUserController::class, 'removeAdmin']);
-            Route::delete('/users/{user}',            [AdminUserController::class, 'destroy']);
+            // ── Users ─────────────────────────────────────────────────────
+            Route::get('/users',                       [AdminUserController::class, 'index']);
+            Route::get('/users/{user}',                [AdminUserController::class, 'show']);
+            Route::patch('/users/{user}/suspend',      [AdminUserController::class, 'suspend']);
+            Route::patch('/users/{user}/unsuspend',    [AdminUserController::class, 'unsuspend']);
+            Route::patch('/users/{user}/make-admin',   [AdminUserController::class, 'makeAdmin']);
+            Route::patch('/users/{user}/remove-admin', [AdminUserController::class, 'removeAdmin']);
+            Route::delete('/users/{user}',             [AdminUserController::class, 'destroy']);
 
-            // Support tickets
+            // ── Support tickets ───────────────────────────────────────────
             Route::prefix('support/tickets')->group(function () {
-                Route::get('/',                  [AdminSupportController::class, 'index']);
-                Route::get('/{ticket}',          [AdminSupportController::class, 'show']);
-                Route::post('/{ticket}/reply',   [AdminSupportController::class, 'reply']);
-                Route::patch('/{ticket}/status', [AdminSupportController::class, 'updateStatus']);
-                Route::delete('/{ticket}',       [AdminSupportController::class, 'destroy']);
+                Route::get('/',                     [AdminSupportController::class, 'index']);
+                Route::get('/{ticket}',             [AdminSupportController::class, 'show']);
+                Route::post('/{ticket}/reply',      [AdminSupportController::class, 'reply']);
+                Route::patch('/{ticket}/status',    [AdminSupportController::class, 'updateStatus']);
+                Route::delete('/{ticket}',          [AdminSupportController::class, 'destroy']);
                 Route::get('/{message}/attachment', [AdminSupportController::class, 'attachment']);
             });
         });
