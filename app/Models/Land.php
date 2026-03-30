@@ -73,6 +73,7 @@ class Land extends Model
         'sold_percentage',
         'map_color',
         'current_price_per_unit_kobo',
+        'geometry_geojson',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────
@@ -157,14 +158,29 @@ class Land extends Model
     }
 
     /**
-     * Fetch GeoJSON on demand — NOT appended automatically to avoid N+1 queries.
+     * Returns the coordinates column as a decoded GeoJSON array.
+     * Appended automatically to every serialised Land instance so the
+     * frontend edit form can read geometry_geojson without touching the
+     * raw WKB hex in `coordinates`.
      */
-    public function getCoordinatesGeojson(): ?string
+    public function getGeometryGeojsonAttribute(): ?array
     {
-        return DB::table('lands')
+        return $this->fetchGeojson();
+    }
+
+    /**
+     * Shared implementation — runs ST_AsGeoJSON() and decodes the result.
+     */
+    private function fetchGeojson(): ?array
+    {
+        if (! $this->id) return null;
+
+        $json = DB::table('lands')
             ->where('id', $this->id)
             ->selectRaw('ST_AsGeoJSON(coordinates) as geojson')
             ->value('geojson');
+
+        return $json ? json_decode($json, true) : null;
     }
 
     // ── Query scopes ──────────────────────────────────────────────────────────
