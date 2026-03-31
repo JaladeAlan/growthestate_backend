@@ -13,13 +13,12 @@ return new class extends Migration
             $table->id();
             $table->foreignId('seller_id')->constrained('users')->cascadeOnDelete();
             $table->foreignId('land_id')->constrained('lands')->cascadeOnDelete();
-            $table->unsignedInteger('units_for_sale');          // units being listed
-            $table->unsignedBigInteger('asking_price_kobo');    // per unit, in kobo
+            $table->unsignedInteger('units_for_sale');
+            $table->unsignedBigInteger('asking_price_kobo');    // per unit
             $table->text('description')->nullable();
             $table->enum('status', [
-                'active',       // visible to buyers
-                'in_escrow',    // offer accepted, awaiting payment
-                'sold',         // completed
+                'active',       // visible, accepting offers
+                'sold',         // all units sold
                 'cancelled',    // cancelled by seller
                 'expired',      // past expiry date
             ])->default('active');
@@ -37,11 +36,11 @@ return new class extends Migration
                   ->constrained('marketplace_listings')
                   ->cascadeOnDelete();
             $table->foreignId('buyer_id')->constrained('users')->cascadeOnDelete();
-            $table->unsignedInteger('units');                   // units buyer wants
-            $table->unsignedBigInteger('offer_price_kobo');     // per unit offered
+            $table->unsignedInteger('units');
+            $table->unsignedBigInteger('offer_price_kobo');     // per unit
             $table->enum('status', [
                 'pending',      // awaiting seller response
-                'accepted',     // seller accepted — escrow created
+                'accepted',     // seller accepted — trade completed immediately
                 'rejected',     // seller rejected
                 'withdrawn',    // buyer withdrew
                 'expired',      // auto-expired
@@ -54,8 +53,10 @@ return new class extends Migration
             $table->index('buyer_id');
         });
 
-        // ── Escrow / trade transactions ───────────────────────────────────────
-        Schema::create('marketplace_escrows', function (Blueprint $table) {
+        // ── Completed trade record (replaces escrow) ──────────────────────────
+        // One row per completed trade — immutable audit trail.
+        // Written atomically with the wallet debit/credit and unit transfer.
+        Schema::create('marketplace_transactions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('listing_id')
                   ->constrained('marketplace_listings')
@@ -63,30 +64,23 @@ return new class extends Migration
             $table->foreignId('offer_id')
                   ->constrained('marketplace_offers')
                   ->cascadeOnDelete();
-            $table->foreignId('buyer_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('seller_id')->constrained('users')->cascadeOnDelete();
-            $table->foreignId('land_id')->constrained('lands')->cascadeOnDelete();
+            $table->foreignId('buyer_id') ->constrained('users');
+            $table->foreignId('seller_id')->constrained('users');
+            $table->foreignId('land_id')  ->constrained('lands');
+
             $table->unsignedInteger('units');
             $table->unsignedBigInteger('price_per_unit_kobo');
-            $table->unsignedBigInteger('total_kobo');           // units × price
-            $table->unsignedBigInteger('platform_fee_kobo')->default(0); // e.g. 1%
-            $table->unsignedBigInteger('seller_receives_kobo'); // total − fee
-            $table->enum('status', [
-                'awaiting_payment',  // buyer needs to pay
-                'paid',              // buyer paid, units not yet transferred
-                'completed',         // units transferred to buyer
-                'disputed',          // dispute raised
-                'refunded',          // refund issued to buyer
-                'cancelled',         // cancelled before payment
-            ])->default('awaiting_payment');
-            $table->string('payment_reference')->nullable()->unique();
-            $table->timestamp('paid_at')->nullable();
-            $table->timestamp('completed_at')->nullable();
-            $table->timestamp('expires_at')->nullable();        // payment deadline
+            $table->unsignedBigInteger('total_kobo');
+            $table->unsignedBigInteger('platform_fee_kobo')->default(0);
+            $table->unsignedBigInteger('seller_receives_kobo');
+
+            $table->string('reference')->unique();
+            $table->timestamp('completed_at');
             $table->timestamps();
 
-            $table->index(['status', 'buyer_id']);
-            $table->index('seller_id');
+            $table->index(['buyer_id',  'completed_at']);
+            $table->index(['seller_id', 'completed_at']);
+            $table->index('land_id');
         });
 
         // ── P2P chat messages ─────────────────────────────────────────────────
@@ -95,7 +89,7 @@ return new class extends Migration
             $table->foreignId('listing_id')
                   ->constrained('marketplace_listings')
                   ->cascadeOnDelete();
-            $table->foreignId('sender_id')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('sender_id')  ->constrained('users')->cascadeOnDelete();
             $table->foreignId('receiver_id')->constrained('users')->cascadeOnDelete();
             $table->text('body');
             $table->boolean('is_read')->default(false);
@@ -108,7 +102,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('marketplace_messages');
-        Schema::dropIfExists('marketplace_escrows');
+        Schema::dropIfExists('marketplace_transactions');
         Schema::dropIfExists('marketplace_offers');
         Schema::dropIfExists('marketplace_listings');
     }

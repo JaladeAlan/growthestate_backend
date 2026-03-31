@@ -3,17 +3,23 @@
 namespace App\Http\Controllers;
 
 use App\Models\Land;
-use App\Models\MarketplaceEscrow;
+use App\Models\LedgerEntry;
 use App\Models\MarketplaceListing;
 use App\Models\MarketplaceMessage;
 use App\Models\MarketplaceOffer;
+use App\Models\MarketplaceTransaction;
+use App\Models\Purchase;
+use App\Models\Transaction;
+use App\Models\UserLand;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class MarketplaceController extends Controller
 {
-    // Platform fee percentage (1 %)
+    // Platform fee percentage (1%)
     const FEE_PCT = 1;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -27,25 +33,30 @@ class MarketplaceController extends Controller
     public function index(Request $request)
     {
         $request->validate([
-            'land_id'  => 'nullable|integer|exists:lands,id',
-            'min_price'=> 'nullable|integer|min:0',
-            'max_price'=> 'nullable|integer|min:0',
-            'sort'     => 'nullable|in:price_asc,price_desc,newest,units_desc',
-            'per_page' => 'nullable|integer|min:1|max:50',
+            'land_id'   => 'nullable|integer|exists:lands,id',
+            'min_price' => 'nullable|integer|min:0',
+            'max_price' => 'nullable|integer|min:0',
+            'sort'      => 'nullable|in:price_asc,price_desc,newest,units_desc',
+            'per_page'  => 'nullable|integer|min:1|max:50',
         ]);
 
         $q = MarketplaceListing::active()
-            ->with(['seller:id,name,email', 'land:id,title,location,lat,lng', 'land.images', 'land.latestPrice']);
+            ->with([
+                'seller:id,name',
+                'land:id,title,location,lat,lng',
+                'land.images',
+                'land.latestPrice',
+            ]);
 
         if ($request->land_id)  $q->where('land_id', $request->land_id);
         if ($request->min_price) $q->where('asking_price_kobo', '>=', $request->min_price);
         if ($request->max_price) $q->where('asking_price_kobo', '<=', $request->max_price);
 
         match ($request->sort ?? 'newest') {
-            'price_asc'   => $q->orderBy('asking_price_kobo'),
-            'price_desc'  => $q->orderByDesc('asking_price_kobo'),
-            'units_desc'  => $q->orderByDesc('units_for_sale'),
-            default       => $q->orderByDesc('created_at'),
+            'price_asc'  => $q->orderBy('asking_price_kobo'),
+            'price_desc' => $q->orderByDesc('asking_price_kobo'),
+            'units_desc' => $q->orderByDesc('units_for_sale'),
+            default      => $q->orderByDesc('created_at'),
         };
 
         return response()->json([
@@ -60,7 +71,7 @@ class MarketplaceController extends Controller
     public function show(MarketplaceListing $listing)
     {
         $listing->load([
-            'seller:id,name,email',
+            'seller:id,name',
             'land:id,title,location,size,total_units,available_units,lat,lng',
             'land.images',
             'land.latestPrice',
@@ -72,7 +83,7 @@ class MarketplaceController extends Controller
 
     /**
      * POST /marketplace
-     * Seller creates a new listing.
+     * Seller creates a listing.
      */
     public function store(Request $request)
     {
@@ -86,22 +97,21 @@ class MarketplaceController extends Controller
             'expires_at'        => 'nullable|date|after:now',
         ]);
 
-        // Verify seller actually owns enough units of this land
+        // Verify seller owns enough unlisted units
         $owned = (int) $user->lands()
             ->wherePivot('land_id', $data['land_id'])
             ->sum('user_land.units');
 
-        // Deduct units already listed in active/in_escrow listings
         $alreadyListed = MarketplaceListing::where('seller_id', $user->id)
             ->where('land_id', $data['land_id'])
-            ->whereIn('status', ['active', 'in_escrow'])
+            ->where('status', 'active')
             ->sum('units_for_sale');
 
         $available = $owned - $alreadyListed;
 
         if ($data['units_for_sale'] > $available) {
             throw ValidationException::withMessages([
-                'units_for_sale' => "You only have {$available} available units to list for this property.",
+                'units_for_sale' => "You only have {$available} unlisted units available for this property.",
             ]);
         }
 
@@ -113,23 +123,21 @@ class MarketplaceController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Listing created successfully.',
+            'message' => 'Listing created.',
             'data'    => $listing->load('land:id,title,location'),
         ], 201);
     }
 
     /**
      * PATCH /marketplace/{listing}
-     * Seller edits an active listing.
+     * Seller edits price / description / expiry on an active listing.
      */
     public function update(Request $request, MarketplaceListing $listing)
     {
         $this->authoriseSeller($listing, $request->user());
 
-        if (! in_array($listing->status, ['active'])) {
-            throw ValidationException::withMessages([
-                'status' => 'Only active listings can be edited.',
-            ]);
+        if ($listing->status !== 'active') {
+            throw ValidationException::withMessages(['status' => 'Only active listings can be edited.']);
         }
 
         $data = $request->validate([
@@ -145,22 +153,20 @@ class MarketplaceController extends Controller
 
     /**
      * DELETE /marketplace/{listing}
-     * Seller cancels an active listing.
+     * Seller cancels an active listing — rejects all pending offers.
      */
     public function destroy(Request $request, MarketplaceListing $listing)
     {
         $this->authoriseSeller($listing, $request->user());
 
-        if (! in_array($listing->status, ['active'])) {
-            throw ValidationException::withMessages([
-                'status' => 'Only active listings can be cancelled.',
-            ]);
+        if ($listing->status !== 'active') {
+            throw ValidationException::withMessages(['status' => 'Only active listings can be cancelled.']);
         }
 
-        $listing->update(['status' => 'cancelled']);
-
-        // Reject all pending offers
-        $listing->pendingOffers()->update(['status' => 'rejected']);
+        DB::transaction(function () use ($listing) {
+            $listing->pendingOffers()->update(['status' => 'rejected']);
+            $listing->update(['status' => 'cancelled']);
+        });
 
         return response()->json(['success' => true, 'message' => 'Listing cancelled.']);
     }
@@ -186,13 +192,11 @@ class MarketplaceController extends Controller
         }
 
         // One pending offer per buyer per listing
-        $existing = MarketplaceOffer::where('listing_id', $listing->id)
+        if (MarketplaceOffer::where('listing_id', $listing->id)
             ->where('buyer_id', $buyer->id)
             ->where('status', 'pending')
-            ->exists();
-
-        if ($existing) {
-            abort(422, 'You already have a pending offer on this listing. Withdraw it first.');
+            ->exists()) {
+            abort(422, 'You already have a pending offer. Withdraw it first.');
         }
 
         $data = $request->validate([
@@ -218,11 +222,16 @@ class MarketplaceController extends Controller
 
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/accept
-     * Seller accepts an offer → creates escrow.
+     *
+     * Seller accepts an offer.
+     * Buyer's wallet is debited and units transfer atomically — no escrow holding period.
+     * If anything fails the entire DB transaction rolls back.
      */
     public function acceptOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
     {
-        $this->authoriseSeller($listing, $request->user());
+        $seller = $request->user();
+
+        $this->authoriseSeller($listing, $seller);
         $this->ensureOfferBelongs($offer, $listing);
 
         if ($offer->status !== 'pending') {
@@ -233,46 +242,188 @@ class MarketplaceController extends Controller
             abort(422, 'Listing is not active.');
         }
 
-        return DB::transaction(function () use ($listing, $offer) {
-            // Reject all other pending offers
+        $request->validate([
+            'transaction_pin' => 'required|digits:4',
+        ]);
+
+        if (! \Hash::check($request->transaction_pin, $seller->transaction_pin)) {
+            throw ValidationException::withMessages(['transaction_pin' => 'Incorrect PIN.']);
+        }
+
+        return DB::transaction(function () use ($listing, $offer, $seller) {
+
+            $buyer      = $offer->buyer()->lockForUpdate()->first();
+            $totalKobo  = $offer->offer_price_kobo * $offer->units;
+            $feeKobo    = (int) round($totalKobo * self::FEE_PCT / 100);
+            $sellerGets = $totalKobo - $feeKobo;
+            $reference  = 'MKT-' . Str::uuid();
+
+            // ── 1. Check buyer has enough balance ─────────────────────────
+            if ($buyer->balance_kobo < $totalKobo) {
+                throw ValidationException::withMessages([
+                    'balance' => 'Buyer has insufficient wallet balance to complete this trade.',
+                ]);
+            }
+
+            // ── 2. Check seller still owns enough units ───────────────────
+            $sellerUnits = (int) $seller->lands()
+                ->wherePivot('land_id', $listing->land_id)
+                ->sum('user_land.units');
+
+            if ($sellerUnits < $offer->units) {
+                throw ValidationException::withMessages([
+                    'units' => 'You no longer have enough units to complete this trade.',
+                ]);
+            }
+
+            // ── 3. Debit buyer wallet ─────────────────────────────────────
+            $buyer->decrement('balance_kobo', $totalKobo);
+
+            LedgerEntry::create([
+                'uid'           => $buyer->id,
+                'type'          => 'marketplace_purchase',
+                'amount_kobo'   => $totalKobo,
+                'balance_after' => $buyer->fresh()->balance_kobo,
+                'reference'     => $reference,
+            ]);
+
+            // ── 4. Credit seller wallet (minus fee) ───────────────────────
+            $seller->increment('balance_kobo', $sellerGets);
+
+            LedgerEntry::create([
+                'uid'           => $seller->id,
+                'type'          => 'marketplace_sale',
+                'amount_kobo'   => $sellerGets,
+                'balance_after' => $seller->fresh()->balance_kobo,
+                'reference'     => $reference,
+            ]);
+
+            // ── 5. Transfer units: decrement seller ───────────────────────
+            DB::statement("
+                UPDATE user_land
+                SET units = units - ?, updated_at = NOW()
+                WHERE user_id = ? AND land_id = ?
+            ", [$offer->units, $seller->id, $listing->land_id]);
+
+            // Remove row if seller now holds zero units
+            UserLand::where('user_id', $seller->id)
+                ->where('land_id', $listing->land_id)
+                ->where('units', '<=', 0)
+                ->delete();
+
+            // ── 6. Transfer units: increment buyer ────────────────────────
+            DB::statement("
+                INSERT INTO user_land (user_id, land_id, units, created_at, updated_at)
+                VALUES (?, ?, ?, NOW(), NOW())
+                ON CONFLICT (user_id, land_id)
+                DO UPDATE SET units = user_land.units + EXCLUDED.units, updated_at = NOW()
+            ", [$buyer->id, $listing->land_id, $offer->units]);
+
+            // ── 7. Update Purchase records ────────────────────────────────
+            // Reduce seller's purchase record
+            Purchase::where('user_id', $seller->id)
+                ->where('land_id', $listing->land_id)
+                ->decrement('units', $offer->units);
+
+            // Upsert buyer's purchase record
+            DB::statement("
+                INSERT INTO purchases
+                    (user_id, land_id, units, units_sold, total_amount_paid_kobo,
+                     total_amount_received_kobo, status, purchase_date, reference, created_at, updated_at)
+                VALUES (?, ?, ?, 0, ?, 0, 'active', ?, ?, NOW(), NOW())
+                ON CONFLICT (user_id, land_id)
+                DO UPDATE SET
+                    units                  = purchases.units + EXCLUDED.units,
+                    total_amount_paid_kobo = purchases.total_amount_paid_kobo + EXCLUDED.total_amount_paid_kobo,
+                    reference              = EXCLUDED.reference,
+                    purchase_date          = EXCLUDED.purchase_date,
+                    updated_at             = NOW()
+            ", [
+                $buyer->id,
+                $listing->land_id,
+                $offer->units,
+                $totalKobo,
+                now()->toDateTimeString(),
+                $reference,
+            ]);
+
+            // ── 8. Log transaction for both parties ───────────────────────
+            Transaction::insert([
+                [
+                    'user_id'          => $buyer->id,
+                    'land_id'          => $listing->land_id,
+                    'type'             => 'marketplace_purchase',
+                    'units'            => $offer->units,
+                    'amount_kobo'      => $totalKobo,
+                    'status'           => 'completed',
+                    'reference'        => $reference,
+                    'transaction_date' => now(),
+                    'created_at'       => now(),
+                    'updated_at'       => now(),
+                ],
+                [
+                    'user_id'          => $seller->id,
+                    'land_id'          => $listing->land_id,
+                    'type'             => 'marketplace_sale',
+                    'units'            => $offer->units,
+                    'amount_kobo'      => $sellerGets,
+                    'status'           => 'completed',
+                    'reference'        => $reference,
+                    'transaction_date' => now(),
+                    'created_at'       => now(),
+                    'updated_at'       => now(),
+                ],
+            ]);
+
+            // ── 9. Reject remaining offers, close listing ─────────────────
             MarketplaceOffer::where('listing_id', $listing->id)
                 ->where('id', '!=', $offer->id)
                 ->where('status', 'pending')
                 ->update(['status' => 'rejected']);
 
             $offer->update(['status' => 'accepted']);
-            $listing->update(['status' => 'in_escrow']);
 
-            $totalKobo      = $offer->offer_price_kobo * $offer->units;
-            $feeKobo        = (int) round($totalKobo * self::FEE_PCT / 100);
-            $sellerReceives = $totalKobo - $feeKobo;
+            // Mark listing sold or partially sold if only some units were bought
+            $remainingUnits = $listing->units_for_sale - $offer->units;
+            $listing->update([
+                'status'         => $remainingUnits > 0 ? 'active' : 'sold',
+                'units_for_sale' => $remainingUnits,
+            ]);
 
-            $escrow = MarketplaceEscrow::create([
+            // ── 10. Log the marketplace transaction ───────────────────────
+            $mktTx = MarketplaceTransaction::create([
                 'listing_id'           => $listing->id,
                 'offer_id'             => $offer->id,
-                'buyer_id'             => $offer->buyer_id,
-                'seller_id'            => $listing->seller_id,
+                'buyer_id'             => $buyer->id,
+                'seller_id'            => $seller->id,
                 'land_id'              => $listing->land_id,
                 'units'                => $offer->units,
                 'price_per_unit_kobo'  => $offer->offer_price_kobo,
                 'total_kobo'           => $totalKobo,
                 'platform_fee_kobo'    => $feeKobo,
-                'seller_receives_kobo' => $sellerReceives,
-                'status'               => 'awaiting_payment',
-                'expires_at'           => now()->addHours(24),
+                'seller_receives_kobo' => $sellerGets,
+                'reference'            => $reference,
+                'completed_at'         => now(),
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Offer accepted. Escrow created — buyer has 24 hours to pay.',
-                'data'    => $escrow->load('buyer:id,name,email'),
+                'message' => 'Trade complete. Units transferred immediately.',
+                'data'    => [
+                    'reference'            => $reference,
+                    'units'                => $offer->units,
+                    'total_kobo'           => $totalKobo,
+                    'platform_fee_kobo'    => $feeKobo,
+                    'seller_receives_kobo' => $sellerGets,
+                    'buyer'                => $buyer->only('id', 'name'),
+                    'seller'               => $seller->only('id', 'name'),
+                ],
             ]);
         });
     }
 
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/reject
-     * Seller rejects an offer.
      */
     public function rejectOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
     {
@@ -288,7 +439,6 @@ class MarketplaceController extends Controller
 
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/withdraw
-     * Buyer withdraws their own offer.
      */
     public function withdrawOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
     {
@@ -303,118 +453,19 @@ class MarketplaceController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ESCROW & PAYMENT
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * GET /marketplace/escrow/{escrow}
-     */
-    public function showEscrow(Request $request, MarketplaceEscrow $escrow)
-    {
-        $user = $request->user();
-        if ($escrow->buyer_id !== $user->id && $escrow->seller_id !== $user->id) abort(403);
-
-        return response()->json([
-            'success' => true,
-            'data'    => $escrow->load(['buyer:id,name', 'seller:id,name', 'land:id,title,location']),
-        ]);
-    }
-
-    /**
-     * POST /marketplace/escrow/{escrow}/pay
-     * Buyer pays from wallet balance. Deducts buyer wallet, marks escrow paid.
-     * Actual unit transfer happens in complete().
-     */
-    public function payEscrow(Request $request, MarketplaceEscrow $escrow)
-    {
-        $buyer = $request->user();
-
-        if ($escrow->buyer_id !== $buyer->id) abort(403);
-        if ($escrow->status !== 'awaiting_payment') abort(422, 'Escrow is not awaiting payment.');
-        if ($escrow->expires_at && $escrow->expires_at->isPast()) {
-            $this->expireEscrow($escrow);
-            abort(422, 'Escrow has expired.');
-        }
-
-        $request->validate([
-            'transaction_pin' => 'required|digits:4',
-        ]);
-
-        // Verify PIN
-        if (! \Hash::check($request->transaction_pin, $buyer->transaction_pin)) {
-            throw ValidationException::withMessages(['transaction_pin' => 'Incorrect PIN.']);
-        }
-
-        return DB::transaction(function () use ($buyer, $escrow) {
-            // Check wallet balance
-            if ($buyer->wallet_balance_kobo < $escrow->total_kobo) {
-                throw ValidationException::withMessages([
-                    'balance' => 'Insufficient wallet balance.',
-                ]);
-            }
-
-            // Deduct from buyer wallet
-            $buyer->decrement('wallet_balance_kobo', $escrow->total_kobo);
-
-            $escrow->update([
-                'status' => 'paid',
-                'paid_at' => now(),
-                'payment_reference' => 'MP-' . strtoupper(uniqid()),
-            ]);
-
-            // Auto-complete: transfer units immediately after payment
-            return $this->completeEscrowTransfer($escrow);
-        });
-    }
-
-    /**
-     * POST /marketplace/escrow/{escrow}/complete  (admin override)
-     * Admin manually completes a paid escrow (e.g. after dispute resolution).
-     */
-    public function completeEscrow(Request $request, MarketplaceEscrow $escrow)
-    {
-        if (! $request->user()->is_admin) abort(403);
-        if (! in_array($escrow->status, ['paid', 'disputed'])) {
-            abort(422, 'Escrow must be paid or disputed to complete.');
-        }
-
-        return $this->completeEscrowTransfer($escrow);
-    }
-
-    /**
-     * POST /marketplace/escrow/{escrow}/dispute
-     * Buyer raises a dispute on a paid escrow.
-     */
-    public function disputeEscrow(Request $request, MarketplaceEscrow $escrow)
-    {
-        if ($escrow->buyer_id !== $request->user()->id) abort(403);
-        if ($escrow->status !== 'paid') abort(422, 'Only paid escrows can be disputed.');
-
-        $request->validate(['reason' => 'required|string|max:1000']);
-
-        $escrow->update(['status' => 'disputed']);
-
-        // TODO: notify admin + create support ticket
-
-        return response()->json(['success' => true, 'message' => 'Dispute raised. Our team will review within 24 hours.']);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // CHAT
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * GET /marketplace/{listing}/messages
-     * Returns the conversation between the auth user and the counterparty.
      */
     public function messages(Request $request, MarketplaceListing $listing)
     {
         $user = $request->user();
         $this->assertChatParticipant($listing, $user);
 
-        // Determine the other party (seller sees buyer's messages, buyer sees seller's)
         $otherId = $user->id === $listing->seller_id
-            ? $request->input('with') // seller must specify which buyer
+            ? (int) $request->input('with')
             : $listing->seller_id;
 
         $messages = MarketplaceMessage::where('listing_id', $listing->id)
@@ -428,7 +479,7 @@ class MarketplaceController extends Controller
             ->orderBy('created_at')
             ->get();
 
-        // Mark received messages as read
+        // Mark incoming messages as read
         MarketplaceMessage::where('listing_id', $listing->id)
             ->where('receiver_id', $user->id)
             ->where('sender_id', $otherId)
@@ -440,7 +491,6 @@ class MarketplaceController extends Controller
 
     /**
      * POST /marketplace/{listing}/messages
-     * Send a chat message.
      */
     public function sendMessage(Request $request, MarketplaceListing $listing)
     {
@@ -450,7 +500,7 @@ class MarketplaceController extends Controller
         $data = $request->validate(['body' => 'required|string|max:2000']);
 
         $receiverId = $sender->id === $listing->seller_id
-            ? $request->input('receiver_id') // seller messages a specific buyer
+            ? (int) $request->input('receiver_id')
             : $listing->seller_id;
 
         if (! $receiverId) abort(422, 'receiver_id is required when seller sends a message.');
@@ -468,9 +518,12 @@ class MarketplaceController extends Controller
         ], 201);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // MY ACTIVITY
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
      * GET /marketplace/my-listings
-     * Authenticated user's own listings.
      */
     public function myListings(Request $request)
     {
@@ -484,7 +537,6 @@ class MarketplaceController extends Controller
 
     /**
      * GET /marketplace/my-offers
-     * Authenticated user's offers (as buyer).
      */
     public function myOffers(Request $request)
     {
@@ -497,20 +549,20 @@ class MarketplaceController extends Controller
     }
 
     /**
-     * GET /marketplace/my-escrows
-     * Escrows where auth user is buyer or seller.
+     * GET /marketplace/my-transactions
+     * Completed trades where the user was buyer or seller.
      */
-    public function myEscrows(Request $request)
+    public function myTransactions(Request $request)
     {
         $userId = $request->user()->id;
 
-        $escrows = MarketplaceEscrow::where('buyer_id', $userId)
+        $txs = MarketplaceTransaction::where('buyer_id', $userId)
             ->orWhere('seller_id', $userId)
             ->with(['land:id,title,location', 'buyer:id,name', 'seller:id,name'])
-            ->orderByDesc('created_at')
+            ->orderByDesc('completed_at')
             ->paginate(20);
 
-        return response()->json(['success' => true, 'data' => $escrows]);
+        return response()->json(['success' => true, 'data' => $txs]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -537,53 +589,5 @@ class MarketplaceController extends Controller
         if (! $isSeller && ! $isBuyer) {
             abort(403, 'You must have an offer on this listing to chat.');
         }
-    }
-
-    private function completeEscrowTransfer(MarketplaceEscrow $escrow)
-    {
-        return DB::transaction(function () use ($escrow) {
-            $seller = $escrow->seller;
-            $buyer  = $escrow->buyer;
-
-            // Transfer units: decrement seller, increment buyer
-            $seller->lands()->updateExistingPivot($escrow->land_id, [
-                'units' => DB::raw("units - {$escrow->units}"),
-            ]);
-
-            // Attach or increment buyer's units
-            $existing = $buyer->lands()->where('land_id', $escrow->land_id)->first();
-            if ($existing) {
-                $buyer->lands()->updateExistingPivot($escrow->land_id, [
-                    'units' => DB::raw("units + {$escrow->units}"),
-                ]);
-            } else {
-                $buyer->lands()->attach($escrow->land_id, ['units' => $escrow->units]);
-            }
-
-            // Credit seller wallet (minus platform fee)
-            $seller->increment('wallet_balance_kobo', $escrow->seller_receives_kobo);
-
-            // Update land available_units (no change — units just changed hands)
-            // Mark escrow and listing complete
-            $escrow->update([
-                'status'       => 'completed',
-                'completed_at' => now(),
-            ]);
-
-            $escrow->listing->update(['status' => 'sold']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Trade complete. Units transferred to buyer.',
-                'data'    => $escrow->fresh(),
-            ]);
-        });
-    }
-
-    private function expireEscrow(MarketplaceEscrow $escrow): void
-    {
-        $escrow->update(['status' => 'cancelled']);
-        $escrow->offer->update(['status' => 'expired']);
-        $escrow->listing->update(['status' => 'active']); // re-open listing
     }
 }

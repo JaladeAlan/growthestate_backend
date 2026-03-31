@@ -13,9 +13,9 @@ class MarketplaceListing extends Model
     ];
 
     protected $casts = [
-        'units_for_sale'     => 'integer',
-        'asking_price_kobo'  => 'integer',
-        'expires_at'         => 'datetime',
+        'units_for_sale'    => 'integer',
+        'asking_price_kobo' => 'integer',
+        'expires_at'        => 'datetime',
     ];
 
     protected $appends = ['asking_price_naira', 'is_expired'];
@@ -43,9 +43,9 @@ class MarketplaceListing extends Model
                     ->where('status', 'pending');
     }
 
-    public function escrow()
+    public function transactions()
     {
-        return $this->hasOne(MarketplaceEscrow::class, 'listing_id');
+        return $this->hasMany(MarketplaceTransaction::class, 'listing_id');
     }
 
     public function messages()
