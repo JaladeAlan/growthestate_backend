@@ -46,6 +46,17 @@ class PortfolioService
             ->get()
             ->keyBy('land_id');
 
+        // Latest active certificate per land for this user
+        // One cert per (user, land) — take the most recently issued one
+        $certificates = DB::table('certificates')
+            ->select('land_id', 'cert_number')
+            ->where('user_id', $userId)
+            ->where('status', 'active')
+            ->orderByDesc('issued_at')
+            ->get()
+            ->unique('land_id')   // keep the latest per land
+            ->keyBy('land_id');
+
         $totalUnits    = 0;
         $totalInvested = 0;
         $totalValue    = 0;
@@ -74,6 +85,8 @@ class PortfolioService
 
             $land = DB::table('lands')->find($userLand->land_id);
 
+            $cert = $certificates->get($userLand->land_id);
+
             $landBreakdown[] = [
                 'land_id'                     => $userLand->land_id,
                 'land_name'                   => $land->title ?? 'Unknown',
@@ -89,6 +102,8 @@ class PortfolioService
                 'profit_loss_kobo'            => $landProfitLoss,
                 'profit_loss_naira'           => $landProfitLoss / 100,
                 'profit_loss_percent'         => $landProfitLossPercent,
+                'available_units'             => $land->available_units ?? 0,
+                'cert_number'                 => $cert->cert_number ?? null,
             ];
         }
 

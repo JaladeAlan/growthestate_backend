@@ -12,6 +12,7 @@ use App\Models\ReferralReward;
 use App\Models\Transaction;
 use App\Models\UserLand;
 use App\Services\RewardsService;
+use App\Services\CertificateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +22,8 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseController extends Controller
 {
+    public function __construct(private CertificateService $certificateService) {}
+
     // ─────────────────────────────────────────────────────────────────────────
     // PURCHASE PREVIEW
     // GET /lands/{landId}/purchase/preview?units=N&use_rewards=1
@@ -139,7 +142,6 @@ class PurchaseController extends Controller
 
                 $isFirstPurchase = ! Purchase::where('user_id', $user->id)->exists();
 
-                // ── Discounts ─────────────────────────────────────────────────
                 [
                     $discountApplied,
                     $discountLabel,
@@ -151,7 +153,6 @@ class PurchaseController extends Controller
 
                 $afterDiscount = $totalCost - $discountApplied;
 
-                // ── Rewards balance offset ────────────────────────────────────
                 $rewardsUsed = 0;
                 $mainUsed    = $afterDiscount;
 
@@ -160,7 +161,6 @@ class PurchaseController extends Controller
                     $mainUsed    = $afterDiscount - $rewardsUsed;
                 }
 
-                // ── Main wallet check ─────────────────────────────────────────
                 if ($user->balance_kobo < $mainUsed) {
                     throw ValidationException::withMessages([
                         'wallet' => 'Insufficient wallet balance.',
@@ -169,7 +169,6 @@ class PurchaseController extends Controller
 
                 $reference = 'PUR-' . Str::uuid();
 
-                // ── Claim referral discount reward row if used ────────────────
                 if ($discountRewardUsed) {
                     $discountRewardUsed->update(['claimed' => true, 'claimed_at' => now()]);
                     Log::info('Referral discount applied at checkout', [
@@ -189,12 +188,10 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // ── Debit rewards wallet ──────────────────────────────────────
                 if ($rewardsUsed > 0) {
                     RewardsService::spend($user, $rewardsUsed, $reference, "Purchase: {$land->title}");
                 }
 
-                // ── Debit main wallet ─────────────────────────────────────────
                 if ($mainUsed > 0) {
                     $user->decrement('balance_kobo', $mainUsed);
                     $balanceAfter = $user->fresh()->balance_kobo;
@@ -208,14 +205,12 @@ class PurchaseController extends Controller
                     ]);
                 }
 
-                // ── Update land ───────────────────────────────────────────────
                 $land->decrement('available_units', $request->units);
                 $land->is_available = $land->available_units > 0;
                 $land->save();
 
                 $actualAmountPaid = $rewardsUsed + $mainUsed;
 
-                // ── Upsert purchase record ────────────────────────────────────
                 DB::statement("
                     INSERT INTO purchases
                         (user_id, land_id, units, units_sold,
@@ -238,7 +233,6 @@ class PurchaseController extends Controller
                     $reference,
                 ]);
 
-                // ── Upsert user_land ──────────────────────────────────────────
                 DB::statement("
                     INSERT INTO user_land (user_id, land_id, units, created_at, updated_at)
                     VALUES (?, ?, ?, NOW(), NOW())
@@ -248,7 +242,6 @@ class PurchaseController extends Controller
                         updated_at = NOW()
                 ", [$user->id, $land->id, $request->units]);
 
-                // ── Transaction log ───────────────────────────────────────────
                 Transaction::create([
                     'user_id'          => $user->id,
                     'land_id'          => $land->id,
@@ -320,11 +313,30 @@ class PurchaseController extends Controller
                     $eventPayload['totalCost'],
                     $eventPayload['reference'],
                 ));
+
+                // Issue / refresh certificate with the latest purchase record
+                $purchase = Purchase::where('user_id', $user->id)
+                    ->where('land_id', $eventPayload['landId'])
+                    ->latest('updated_at')
+                    ->first();
+
+                if ($purchase) {
+                    $certificate = $this->certificateService->issue($purchase);
+
+                    $responseData['certificate'] = [
+                        'cert_number' => $certificate->cert_number,
+                        'issued_at'   => $certificate->issued_at->toDateTimeString(),
+                        'units'       => $certificate->units,
+                        'view_url'    => "/portfolio/certificate/{$certificate->cert_number}",
+                    ];
+                }
+
             } catch (\Throwable $e) {
-                Log::error('Post-purchase event dispatch failed', [
+                Log::error('Post-purchase event/certificate failed', [
                     'reference' => $eventPayload['reference'],
                     'error'     => $e->getMessage(),
                 ]);
+                // Certificate failure must NOT block the purchase response
             }
         }
 
@@ -414,12 +426,14 @@ class PurchaseController extends Controller
                 ]);
 
                 $eventPayload = [
-                    'userId'        => $user->id,
-                    'landId'        => $land->id,
-                    'units'         => $request->units,
-                    'pricePerUnit'  => $pricePerUnit,
-                    'totalReceived' => $totalReceived,
-                    'reference'     => $reference,
+                    'userId'         => $user->id,
+                    'landId'         => $land->id,
+                    'units'          => $request->units,
+                    'remainingUnits' => $remainingUnits,
+                    'pricePerUnit'   => $pricePerUnit,
+                    'totalReceived'  => $totalReceived,
+                    'reference'      => $reference,
+                    'purchaseId'     => $purchase->id,
                 ];
 
                 $responseData = [
@@ -459,6 +473,20 @@ class PurchaseController extends Controller
                     'error'     => $e->getMessage(),
                 ]);
             }
+
+            // ── Refresh / revoke certificate to reflect new unit count ────────
+            try {
+                $purchase = Purchase::find($eventPayload['purchaseId']);
+                if ($purchase) {
+                    $this->certificateService->issue($purchase);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Post-sale certificate refresh failed', [
+                    'reference' => $eventPayload['reference'],
+                    'error'     => $e->getMessage(),
+                ]);
+                // Non-blocking — sale already succeeded
+            }
         }
 
         return response()->json($responseData);
@@ -467,13 +495,6 @@ class PurchaseController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // DISCOUNT CALCULATOR
     // ─────────────────────────────────────────────────────────────────────────
-    /**
-     * Returns [discountKobo, label, effectivePercent, firstPurchaseKobo, referralKobo, rewardRow|null]
-
-     * rewards.max_discount_kobo (int, kobo)
-     *   0  → no cap
-     *   N  → the final discount for either scheme is clamped to N kobo
-     */
     private function calculateDiscount(
         $user,
         int $totalCost,
@@ -484,13 +505,8 @@ class PurchaseController extends Controller
             return [0, null, 0, 0, 0, null];
         }
 
-        // Shared absolute ceiling — 0 means unlimited
         $maxDiscountKobo = (int) config('rewards.max_discount_kobo', 500000);
 
-        /**
-         * Clamp a raw kobo discount to the ceiling and return
-         * [cappedKobo, wasCapped].
-         */
         $applyCap = function (int $rawKobo) use ($maxDiscountKobo): array {
             if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
                 return [$maxDiscountKobo, true];
@@ -500,27 +516,21 @@ class PurchaseController extends Controller
 
         $isFirst = ! Purchase::where('user_id', $user->id)->exists();
 
-        // ── 1. First-purchase discount ────────────────────────────────────────
         if ($isFirst) {
             $percent = (int) config('rewards.first_purchase_discount_percent', 0);
             if ($percent > 0) {
                 $rawKobo = (int) floor($totalCost * ($percent / 100));
-
                 [$kobo, $wasCapped] = $applyCap($rawKobo);
-
                 $effectivePercent = $totalCost > 0
                     ? round(($kobo / $totalCost) * 100, 2)
                     : $percent;
-
                 $label = $wasCapped
                     ? "First purchase (capped at ₦" . number_format($maxDiscountKobo / 100) . " off)"
                     : "First purchase ({$percent}% off)";
-
                 return [$kobo, $label, $effectivePercent, $kobo, 0, null];
             }
         }
 
-        // ── 2. Referral discount reward ───────────────────────────────────────
         $query = ReferralReward::where('user_id', $user->id)
             ->where('reward_type', 'discount')
             ->where('claimed', false)
@@ -531,17 +541,13 @@ class PurchaseController extends Controller
         if ($row) {
             $percent = $row->discount_percentage;
             $rawKobo = (int) floor($totalCost * ($percent / 100));
-
             [$kobo, $wasCapped] = $applyCap($rawKobo);
-
             $effectivePercent = $totalCost > 0
                 ? round(($kobo / $totalCost) * 100, 2)
                 : $percent;
-
             $label = $wasCapped
                 ? "Referral discount (capped at ₦" . number_format($maxDiscountKobo / 100) . " off)"
                 : "Referral discount ({$percent}% off)";
-
             return [$kobo, $label, $effectivePercent, 0, $kobo, $row];
         }
 
