@@ -16,7 +16,6 @@ class CertificateService
         $user = $purchase->user;
         $land = $purchase->land;
 
-        // All units sold — revoke
         if ($purchase->units <= 0) {
             Certificate::where('purchase_id', $purchase->id)
                 ->update(['status' => 'revoked', 'revoked_at' => now()]);
@@ -100,9 +99,6 @@ class CertificateService
         return $path;
     }
 
-    /**
-     * Render to raw PDF bytes — used by the download endpoint to stream directly.
-     */
     public function renderPdfBytes(Certificate $certificate): string
     {
         $dompdf = $this->makeDompdf();
@@ -169,7 +165,19 @@ class CertificateService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // HTML TEMPLATE — Portrait A4, no QR code
+    // HTML TEMPLATE
+    //
+    // Key Dompdf layout rules applied here:
+    //   • Use px throughout — Dompdf's mm/cm support is unreliable inside
+    //     inline styles and causes the overflow you were seeing.
+    //   • A4 portrait at 96 dpi = 794 × 1123 px usable canvas.
+    //   • We set an explicit width on <body> and every top-level block so
+    //     Dompdf never has to guess the containing-block width.
+    //   • Avoid position:absolute for decorative borders — use a wrapping
+    //     table-based border instead (Dompdf absolute positioning is buggy
+    //     with page breaks and overflows).
+    //   • word-break / overflow-wrap on long monospace strings (signature,
+    //     cert number, purchase ref) so they never bleed past the right edge.
     // ─────────────────────────────────────────────────────────────────────────
     private function buildHtml(Certificate $c): string
     {
@@ -186,22 +194,26 @@ class CertificateService
 
         $total          = '&#8358;' . number_format((float) $c->total_invested, 2);
         $units          = number_format((int) $c->units);
-        $plotIdentifier = htmlspecialchars($c->plot_identifier ?? '—', ENT_QUOTES, 'UTF-8');
+        $plotIdentifier = htmlspecialchars($c->plot_identifier      ?? '—', ENT_QUOTES, 'UTF-8');
         $tenure         = htmlspecialchars(ucfirst(strtolower($c->tenure ?? '—')), ENT_QUOTES, 'UTF-8');
-        $lga            = htmlspecialchars($c->lga   ?? '—', ENT_QUOTES, 'UTF-8');
-        $state          = htmlspecialchars($c->state ?? '—', ENT_QUOTES, 'UTF-8');
+        $lga            = htmlspecialchars($c->lga                  ?? '—', ENT_QUOTES, 'UTF-8');
+        $state          = htmlspecialchars($c->state                ?? '—', ENT_QUOTES, 'UTF-8');
         $title          = htmlspecialchars($c->property_title,    ENT_QUOTES, 'UTF-8');
         $location       = htmlspecialchars($c->property_location, ENT_QUOTES, 'UTF-8');
-        $owner          = htmlspecialchars($c->owner_name,         ENT_QUOTES, 'UTF-8');
+        $owner          = htmlspecialchars($c->owner_name,        ENT_QUOTES, 'UTF-8');
         $certNumber     = htmlspecialchars($c->cert_number,        ENT_QUOTES, 'UTF-8');
-        $purchaseRef    = htmlspecialchars($c->purchase_reference, ENT_QUOTES, 'UTF-8');
-        $signature      = htmlspecialchars($c->digital_signature,  ENT_QUOTES, 'UTF-8');
-        $verifyUrl      = htmlspecialchars(config('app.url') . '/verify', ENT_QUOTES, 'UTF-8');
+        $purchaseRef    = htmlspecialchars($c->purchase_reference,  ENT_QUOTES, 'UTF-8');
+        $signature      = htmlspecialchars($c->digital_signature,   ENT_QUOTES, 'UTF-8');
+        $verifyUrl      = htmlspecialchars(
+            config('app.frontend_url') . '/verify',
+            ENT_QUOTES, 'UTF-8'
+        );
 
         $updatedRow = $lastUpdated
-            ? '<tr><td class="label">Last Updated</td><td class="value">'
-              . htmlspecialchars($lastUpdated, ENT_QUOTES, 'UTF-8')
-              . '</td></tr>'
+            ? '<tr>
+                <td class="label">Last Updated</td>
+                <td class="value">' . htmlspecialchars($lastUpdated, ENT_QUOTES, 'UTF-8') . '</td>
+               </tr>'
             : '';
 
         return <<<HTML
@@ -211,144 +223,144 @@ class CertificateService
 <meta charset="UTF-8">
 <style>
 
+/*
+ * Dompdf A4 portrait at default 96 dpi:
+ *   Full page  = 794 × 1123 px
+ *   We give the body 750 px wide and let Dompdf centre it.
+ *   All horizontal measurements are set in px so Dompdf
+ *   never misinterprets unit conversions.
+ */
+
 @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 22px 22px 22px 22px;
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
 
 body {
     font-family: "DejaVu Sans", sans-serif;
     background: #0D1F1A;
     color: #FFFFFF;
-    width: 210mm;
-    min-height: 297mm;
+    width: 750px;       /* 794 - 2×22 px margin */
+    font-size: 8px;
 }
 
-/* ── Outer page wrapper ─────────────────────────────────────────────── */
-.page {
-    width: 210mm;
-    min-height: 297mm;
-    padding: 14mm;
-    background: #0D1F1A;
-    position: relative;
+/* ── Outer gold frame ────────────────────────────────────────────────── */
+.frame {
+    width: 750px;
+    border: 1.8px solid #C8873A;
+    padding: 3px;
 }
-
-/* ── Double gold border ─────────────────────────────────────────────── */
-.border-outer {
-    position: absolute;
-    top: 10mm; left: 10mm; right: 10mm; bottom: 10mm;
-    border: 2px solid #C8873A;
-}
-.border-inner {
-    position: absolute;
-    top: 13mm; left: 13mm; right: 13mm; bottom: 13mm;
-    border: 0.5px solid rgba(200,135,58,0.35);
+.frame-inner {
+    width: 100%;
+    border: 0.5px solid rgba(200,135,58,0.30);
+    padding: 0;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────── */
 .header {
     background: #091510;
-    margin: 0 -14mm;
-    margin-top: -14mm;
-    padding: 14mm 24mm 12mm;
     text-align: center;
-    border-bottom: 0.5px solid rgba(200,135,58,0.25);
+    padding: 22px 28px 18px;
+    border-bottom: 1px solid rgba(200,135,58,0.22);
     position: relative;
 }
 .header-bar {
-    position: absolute;
-    top: 0; left: 0; right: 0;
     height: 3px;
     background: #C8873A;
+    margin-bottom: 18px;
 }
 .brand {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: bold;
     letter-spacing: 0.38em;
     color: #C8873A;
     text-transform: uppercase;
-    margin-bottom: 9px;
+    margin-bottom: 8px;
 }
 .cert-title {
-    font-size: 21px;
+    font-size: 20px;
     font-weight: bold;
     color: #FFFFFF;
     letter-spacing: 0.04em;
     margin-bottom: 5px;
 }
 .cert-subtitle {
-    font-size: 7.5px;
-    letter-spacing: 0.22em;
-    color: rgba(200,135,58,0.7);
+    font-size: 7px;
+    letter-spacing: 0.20em;
+    color: rgba(200,135,58,0.65);
     text-transform: uppercase;
 }
 
-/* ── Body ────────────────────────────────────────────────────────────── */
+/* ── Body wrapper ────────────────────────────────────────────────────── */
 .body {
-    padding: 9mm 9mm 0;
+    padding: 18px 22px 16px;
 }
 
 /* ── Gold divider ────────────────────────────────────────────────────── */
 .divider {
     height: 0.5px;
     background: rgba(200,135,58,0.28);
-    margin: 7mm 0;
+    margin: 14px 0;
 }
 
 /* ── Declaration ─────────────────────────────────────────────────────── */
 .declaration {
     text-align: center;
-    padding: 2mm 0;
+    padding: 6px 0;
 }
 .declaration .intro {
-    font-size: 9px;
+    font-size: 8.5px;
     color: rgba(255,255,255,0.38);
     font-style: italic;
     margin-bottom: 5px;
 }
 .declaration .owner-name {
-    font-size: 21px;
+    font-size: 20px;
     font-weight: bold;
     color: #E8A850;
     margin-bottom: 5px;
 }
 .declaration .verb {
-    font-size: 9px;
+    font-size: 8.5px;
     color: rgba(255,255,255,0.38);
     font-style: italic;
     margin-bottom: 6px;
 }
 .declaration .unit-count {
-    font-size: 44px;
+    font-size: 40px;
     font-weight: bold;
     color: #FFFFFF;
     line-height: 1;
     margin-bottom: 2px;
 }
 .declaration .unit-label {
-    font-size: 8px;
+    font-size: 7.5px;
     font-weight: bold;
     letter-spacing: 0.28em;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.30);
     text-transform: uppercase;
     margin-bottom: 7px;
 }
 .declaration .in-label {
-    font-size: 9px;
+    font-size: 8.5px;
     color: rgba(255,255,255,0.38);
     font-style: italic;
     margin-bottom: 5px;
 }
 .declaration .property-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: bold;
     color: #C8873A;
     margin-bottom: 3px;
 }
 .declaration .property-location {
-    font-size: 8px;
+    font-size: 7.5px;
     color: rgba(255,255,255,0.32);
 }
 
@@ -356,11 +368,14 @@ body {
 .details-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;  /* prevents any column from blowing out */
 }
 .details-table td {
-    padding: 4px 0;
+    padding: 5px 0;
     border-bottom: 0.5px solid rgba(255,255,255,0.05);
     vertical-align: top;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 .details-table tr:last-child td {
     border-bottom: none;
@@ -368,25 +383,22 @@ body {
 .details-table .label {
     font-size: 6.5px;
     font-weight: bold;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.16em;
     color: rgba(200,135,58,0.65);
     text-transform: uppercase;
-    width: 38%;
-    padding-right: 4mm;
-    padding-top: 5px;
+    width: 36%;
+    padding-right: 10px;
 }
 .details-table .value {
-    font-size: 8.5px;
+    font-size: 8px;
     color: rgba(255,255,255,0.75);
     text-align: right;
-    padding-top: 5px;
 }
 .details-table .value-highlight {
     font-size: 8.5px;
     font-weight: bold;
     color: #E8A850;
     text-align: right;
-    padding-top: 5px;
 }
 
 /* ── Signature block ──────────────────────────────────────────────────── */
@@ -394,34 +406,36 @@ body {
     background: rgba(255,255,255,0.02);
     border: 0.5px solid rgba(255,255,255,0.07);
     border-radius: 3px;
-    padding: 4mm 5mm;
-    margin-bottom: 5mm;
+    padding: 9px 11px;
+    margin-bottom: 12px;
 }
 .signature-label {
     font-size: 6.5px;
     font-weight: bold;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.18em;
     color: rgba(200,135,58,0.6);
     text-transform: uppercase;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
 }
 .signature-value {
     font-size: 6px;
     color: rgba(255,255,255,0.25);
     word-break: break-all;
+    overflow-wrap: break-word;
     line-height: 1.7;
     font-family: "DejaVu Sans Mono", monospace;
+    width: 100%;
 }
 
-/* ── Verify instructions ──────────────────────────────────────────────── */
+/* ── Verify block ─────────────────────────────────────────────────────── */
 .verify-block {
     text-align: center;
-    padding: 5mm 0 4mm;
-    border-top: 0.5px solid rgba(200,135,58,0.2);
-    margin-top: 5mm;
+    padding: 12px 0 10px;
+    border-top: 0.5px solid rgba(200,135,58,0.20);
+    margin-top: 4px;
 }
 .verify-code-label {
-    font-size: 7px;
+    font-size: 6.5px;
     font-weight: bold;
     letter-spacing: 0.18em;
     text-transform: uppercase;
@@ -429,52 +443,52 @@ body {
     margin-bottom: 4px;
 }
 .verify-instruction {
-    font-size: 7.5px;
+    font-size: 7px;
     color: rgba(255,255,255,0.22);
     margin-bottom: 6px;
     line-height: 1.6;
 }
 .verify-code {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: bold;
     font-family: "DejaVu Sans Mono", monospace;
     color: #E8A850;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     margin-bottom: 4px;
+    word-break: break-all;
 }
 .verify-url {
-    font-size: 7.5px;
+    font-size: 7px;
     color: rgba(255,255,255,0.18);
 }
 
 /* ── Footer ───────────────────────────────────────────────────────────── */
 .footer {
     text-align: center;
-    padding-top: 5mm;
-    margin-top: 5mm;
+    padding-top: 12px;
+    margin-top: 10px;
     border-top: 0.5px solid rgba(255,255,255,0.06);
 }
 .footer .brand-footer {
-    font-size: 7px;
+    font-size: 6.5px;
     font-weight: bold;
     letter-spacing: 0.16em;
-    color: rgba(200,135,58,0.4);
+    color: rgba(200,135,58,0.40);
     text-transform: uppercase;
-    margin-bottom: 3px;
+    margin-bottom: 4px;
 }
 .footer p {
-    font-size: 6.5px;
+    font-size: 6px;
     color: rgba(255,255,255,0.16);
-    line-height: 1.9;
+    line-height: 2;
 }
 
 </style>
 </head>
 <body>
-<div class="page">
 
-    <div class="border-outer"></div>
-    <div class="border-inner"></div>
+<div class="frame">
+<div class="frame-inner">
 
     <!-- Header -->
     <div class="header">
@@ -484,6 +498,7 @@ body {
         <div class="cert-subtitle">Fractional Land Investment &nbsp;&middot;&nbsp; Verified Digital Certificate</div>
     </div>
 
+    <!-- Body -->
     <div class="body">
 
         <!-- Declaration -->
@@ -500,7 +515,7 @@ body {
 
         <div class="divider"></div>
 
-        <!-- Property & transaction details -->
+        <!-- Details -->
         <table class="details-table">
             <tr>
                 <td class="label">Certificate No.</td>
@@ -545,12 +560,10 @@ body {
             <div class="signature-value">{$signature}</div>
         </div>
 
-        <!-- Verification instructions -->
+        <!-- Verify -->
         <div class="verify-block">
             <div class="verify-code-label">To Verify This Certificate</div>
-            <div class="verify-instruction">
-                Visit the address below and enter the certificate number exactly as printed.
-            </div>
+            <div class="verify-instruction">Visit the address below and enter the certificate number exactly as printed.</div>
             <div class="verify-code">{$certNumber}</div>
             <div class="verify-url">{$verifyUrl}</div>
         </div>
@@ -563,7 +576,10 @@ body {
         </div>
 
     </div><!-- /.body -->
-</div><!-- /.page -->
+
+</div><!-- /.frame-inner -->
+</div><!-- /.frame -->
+
 </body>
 </html>
 HTML;
