@@ -14,7 +14,6 @@
         "laravel/tinker": "^2.9",
         "league/flysystem-aws-s3-v3": "3.0",
         "predis/predis": "*",
-        "simplesoftwareio/simple-qrcode": "^4.2",
         "tymon/jwt-auth": "^2.2",
         "unicodeveloper/laravel-paystack": "^1.2"
     },

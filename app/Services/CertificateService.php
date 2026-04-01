@@ -8,7 +8,6 @@ use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class CertificateService
 {
@@ -17,13 +16,10 @@ class CertificateService
         $user = $purchase->user;
         $land = $purchase->land;
 
-        // Revoke if no units left
+        // All units sold — revoke
         if ($purchase->units <= 0) {
             Certificate::where('purchase_id', $purchase->id)
-                ->update([
-                    'status' => 'revoked',
-                    'revoked_at' => now()
-                ]);
+                ->update(['status' => 'revoked', 'revoked_at' => now()]);
 
             return Certificate::where('purchase_id', $purchase->id)->firstOrFail();
         }
@@ -32,49 +28,50 @@ class CertificateService
 
         if ($existing) {
             $existing->update([
-                'units' => $purchase->units,
-                'total_invested' => $purchase->total_amount_paid_kobo / 100,
-                'status' => 'active',
+                'units'             => $purchase->units,
+                'total_invested'    => $purchase->total_amount_paid_kobo / 100,
+                'status'            => 'active',
                 'digital_signature' => $this->generateSignature(
                     $existing->cert_number,
                     $purchase->reference,
                     $user->name
                 ),
+                'last_updated_at'   => now(),
             ]);
 
-            $this->safeGeneratePdf($existing);
+            $this->safeGeneratePdf($existing->fresh());
 
             return $existing->fresh();
         }
 
-        // First time
         $certNumber = $this->generateCertNumber($land->id);
 
         $certificate = Certificate::create([
-            'user_id' => $user->id,
-            'land_id' => $land->id,
-            'purchase_id' => $purchase->id,
-            'cert_number' => $certNumber,
-            'digital_signature' => $this->generateSignature(
+            'user_id'            => $user->id,
+            'land_id'            => $land->id,
+            'purchase_id'        => $purchase->id,
+            'cert_number'        => $certNumber,
+            'digital_signature'  => $this->generateSignature(
                 $certNumber,
                 $purchase->reference,
                 $user->name
             ),
-            'owner_name' => $user->name,
-            'units' => $purchase->units,
-            'total_invested' => $purchase->total_amount_paid_kobo / 100,
+            'owner_name'         => $user->name,
+            'units'              => $purchase->units,
+            'total_invested'     => $purchase->total_amount_paid_kobo / 100,
             'purchase_reference' => $purchase->reference,
-            'property_title' => $land->title,
-            'property_location' => $land->location,
-            'plot_identifier' => $land->plot_identifier,
-            'tenure' => $land->tenure,
-            'lga' => $land->lga,
-            'state' => $land->state,
-            'status' => 'active',
-            'issued_at' => now(),
+            'property_title'     => $land->title,
+            'property_location'  => $land->location,
+            'plot_identifier'    => $land->plot_identifier,
+            'tenure'             => $land->tenure,
+            'lga'                => $land->lga,
+            'state'              => $land->state,
+            'status'             => 'active',
+            'issued_at'          => now(),
+            'last_updated_at'    => now(),
         ]);
 
-        $this->safeGeneratePdf($certificate);
+        $this->safeGeneratePdf($certificate->fresh());
 
         return $certificate->fresh();
     }
@@ -85,7 +82,7 @@ class CertificateService
             ->where('status', 'active')
             ->first();
 
-        if (!$cert) return null;
+        if (! $cert) return null;
 
         $expected = $this->generateSignature(
             $cert->cert_number,
@@ -98,20 +95,26 @@ class CertificateService
 
     public function regeneratePdf(Certificate $certificate): string
     {
-        return $this->generatePdf($certificate);
+        $path = $this->generatePdf($certificate);
+        $certificate->update(['pdf_path' => $path]);
+        return $path;
     }
 
+    /**
+     * Render to raw PDF bytes — used by the download endpoint to stream directly.
+     */
     public function renderPdfBytes(Certificate $certificate): string
     {
         $dompdf = $this->makeDompdf();
         $dompdf->loadHtml($this->buildHtml($certificate));
-        $dompdf->setPaper('A4', 'landscape');
+        $dompdf->setPaper('A4', 'portrait');
         $dompdf->render();
-
         return $dompdf->output();
     }
 
-    // ───────────────────────── PRIVATE ─────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // PRIVATE
+    // ─────────────────────────────────────────────────────────────────────────
 
     private function safeGeneratePdf(Certificate $certificate): void
     {
@@ -119,9 +122,9 @@ class CertificateService
             $path = $this->generatePdf($certificate);
             $certificate->update(['pdf_path' => $path]);
         } catch (\Throwable $e) {
-            Log::error('PDF generation failed', [
+            Log::error('Certificate PDF generation failed', [
                 'cert_id' => $certificate->id,
-                'error' => $e->getMessage(),
+                'error'   => $e->getMessage(),
             ]);
         }
     }
@@ -130,13 +133,20 @@ class CertificateService
     {
         $options = new Options();
         $options->set('defaultFont', 'DejaVu Sans');
+        $options->set('isRemoteEnabled', false);
+        $options->set('isHtml5ParserEnabled', true);
         return new Dompdf($options);
     }
 
     private function generateCertNumber(int $landId): string
     {
-        return "CERT-" . now()->year . "-L" . str_pad($landId, 4, '0', STR_PAD_LEFT)
-            . "-" . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT);
+        $year = now()->year;
+        $land = 'L' . str_pad($landId, 4, '0', STR_PAD_LEFT);
+        $seq  = str_pad(
+            Certificate::where('land_id', $landId)->count() + 1,
+            5, '0', STR_PAD_LEFT
+        );
+        return "CERT-{$year}-{$land}-{$seq}";
     }
 
     private function generateSignature(string $certNumber, string $reference, string $owner): string
@@ -148,7 +158,7 @@ class CertificateService
     private function generatePdf(Certificate $certificate): string
     {
         $dir = storage_path('app/private/certificates');
-        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        if (! is_dir($dir)) mkdir($dir, 0755, true);
 
         $filename = Str::slug($certificate->cert_number) . '.pdf';
         $fullPath = "{$dir}/{$filename}";
@@ -158,74 +168,402 @@ class CertificateService
         return "private/certificates/{$filename}";
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // HTML TEMPLATE — Portrait A4, no QR code
+    // ─────────────────────────────────────────────────────────────────────────
     private function buildHtml(Certificate $c): string
     {
-        $verifyUrl = config('app.url') . '/verify/' . $c->cert_number;
+        $issueDate = $c->issued_at
+            ? \Carbon\Carbon::parse($c->issued_at)->format('d F Y')
+            : '—';
 
-      try {
-          $qr = base64_encode(
-              QrCode::format('svg')->size(120)->generate($verifyUrl)
-          );
-          $qrImage = "data:image/svg+xml;base64,{$qr}";
-      } catch (\Throwable $e) {
-          $qrImage = ''; // fallback: no QR instead of crashing
-      }
+        $lastUpdated = (
+            $c->last_updated_at &&
+            \Carbon\Carbon::parse($c->last_updated_at)->ne(\Carbon\Carbon::parse($c->issued_at))
+        )
+            ? \Carbon\Carbon::parse($c->last_updated_at)->format('d F Y')
+            : null;
 
-      $qrImage = "data:image/svg+xml;base64,{$qr}";
-        $total = '₦' . number_format($c->total_invested, 2);
+        $total          = '&#8358;' . number_format((float) $c->total_invested, 2);
+        $units          = number_format((int) $c->units);
+        $plotIdentifier = htmlspecialchars($c->plot_identifier ?? '—', ENT_QUOTES, 'UTF-8');
+        $tenure         = htmlspecialchars(ucfirst(strtolower($c->tenure ?? '—')), ENT_QUOTES, 'UTF-8');
+        $lga            = htmlspecialchars($c->lga   ?? '—', ENT_QUOTES, 'UTF-8');
+        $state          = htmlspecialchars($c->state ?? '—', ENT_QUOTES, 'UTF-8');
+        $title          = htmlspecialchars($c->property_title,    ENT_QUOTES, 'UTF-8');
+        $location       = htmlspecialchars($c->property_location, ENT_QUOTES, 'UTF-8');
+        $owner          = htmlspecialchars($c->owner_name,         ENT_QUOTES, 'UTF-8');
+        $certNumber     = htmlspecialchars($c->cert_number,        ENT_QUOTES, 'UTF-8');
+        $purchaseRef    = htmlspecialchars($c->purchase_reference, ENT_QUOTES, 'UTF-8');
+        $signature      = htmlspecialchars($c->digital_signature,  ENT_QUOTES, 'UTF-8');
+        $verifyUrl      = htmlspecialchars(config('app.url') . '/verify', ENT_QUOTES, 'UTF-8');
+
+        $updatedRow = $lastUpdated
+            ? '<tr><td class="label">Last Updated</td><td class="value">'
+              . htmlspecialchars($lastUpdated, ENT_QUOTES, 'UTF-8')
+              . '</td></tr>'
+            : '';
 
         return <<<HTML
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <style>
-@page { size:A4 landscape; margin:0; }
-body { font-family: DejaVu Sans; background:#0D1F1A; color:#fff; }
-.page { padding:40px; position:relative; }
-h1 { font-size:22px; color:#E8A850; }
-.small { font-size:10px; color:#ccc; }
-.big { font-size:36px; }
-.qr { position:absolute; right:40px; top:40px; }
-.watermark {
- position:absolute; top:50%; left:50%;
- transform:translate(-50%,-50%);
- font-size:70px; color:rgba(255,255,255,0.03);
+
+@page {
+    size: A4 portrait;
+    margin: 0;
 }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: "DejaVu Sans", sans-serif;
+    background: #0D1F1A;
+    color: #FFFFFF;
+    width: 210mm;
+    min-height: 297mm;
+}
+
+/* ── Outer page wrapper ─────────────────────────────────────────────── */
+.page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 14mm;
+    background: #0D1F1A;
+    position: relative;
+}
+
+/* ── Double gold border ─────────────────────────────────────────────── */
+.border-outer {
+    position: absolute;
+    top: 10mm; left: 10mm; right: 10mm; bottom: 10mm;
+    border: 2px solid #C8873A;
+}
+.border-inner {
+    position: absolute;
+    top: 13mm; left: 13mm; right: 13mm; bottom: 13mm;
+    border: 0.5px solid rgba(200,135,58,0.35);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.header {
+    background: #091510;
+    margin: 0 -14mm;
+    margin-top: -14mm;
+    padding: 14mm 24mm 12mm;
+    text-align: center;
+    border-bottom: 0.5px solid rgba(200,135,58,0.25);
+    position: relative;
+}
+.header-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: #C8873A;
+}
+.brand {
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 0.38em;
+    color: #C8873A;
+    text-transform: uppercase;
+    margin-bottom: 9px;
+}
+.cert-title {
+    font-size: 21px;
+    font-weight: bold;
+    color: #FFFFFF;
+    letter-spacing: 0.04em;
+    margin-bottom: 5px;
+}
+.cert-subtitle {
+    font-size: 7.5px;
+    letter-spacing: 0.22em;
+    color: rgba(200,135,58,0.7);
+    text-transform: uppercase;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────── */
+.body {
+    padding: 9mm 9mm 0;
+}
+
+/* ── Gold divider ────────────────────────────────────────────────────── */
+.divider {
+    height: 0.5px;
+    background: rgba(200,135,58,0.28);
+    margin: 7mm 0;
+}
+
+/* ── Declaration ─────────────────────────────────────────────────────── */
+.declaration {
+    text-align: center;
+    padding: 2mm 0;
+}
+.declaration .intro {
+    font-size: 9px;
+    color: rgba(255,255,255,0.38);
+    font-style: italic;
+    margin-bottom: 5px;
+}
+.declaration .owner-name {
+    font-size: 21px;
+    font-weight: bold;
+    color: #E8A850;
+    margin-bottom: 5px;
+}
+.declaration .verb {
+    font-size: 9px;
+    color: rgba(255,255,255,0.38);
+    font-style: italic;
+    margin-bottom: 6px;
+}
+.declaration .unit-count {
+    font-size: 44px;
+    font-weight: bold;
+    color: #FFFFFF;
+    line-height: 1;
+    margin-bottom: 2px;
+}
+.declaration .unit-label {
+    font-size: 8px;
+    font-weight: bold;
+    letter-spacing: 0.28em;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    margin-bottom: 7px;
+}
+.declaration .in-label {
+    font-size: 9px;
+    color: rgba(255,255,255,0.38);
+    font-style: italic;
+    margin-bottom: 5px;
+}
+.declaration .property-name {
+    font-size: 13px;
+    font-weight: bold;
+    color: #C8873A;
+    margin-bottom: 3px;
+}
+.declaration .property-location {
+    font-size: 8px;
+    color: rgba(255,255,255,0.32);
+}
+
+/* ── Details table ────────────────────────────────────────────────────── */
+.details-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.details-table td {
+    padding: 4px 0;
+    border-bottom: 0.5px solid rgba(255,255,255,0.05);
+    vertical-align: top;
+}
+.details-table tr:last-child td {
+    border-bottom: none;
+}
+.details-table .label {
+    font-size: 6.5px;
+    font-weight: bold;
+    letter-spacing: 0.18em;
+    color: rgba(200,135,58,0.65);
+    text-transform: uppercase;
+    width: 38%;
+    padding-right: 4mm;
+    padding-top: 5px;
+}
+.details-table .value {
+    font-size: 8.5px;
+    color: rgba(255,255,255,0.75);
+    text-align: right;
+    padding-top: 5px;
+}
+.details-table .value-highlight {
+    font-size: 8.5px;
+    font-weight: bold;
+    color: #E8A850;
+    text-align: right;
+    padding-top: 5px;
+}
+
+/* ── Signature block ──────────────────────────────────────────────────── */
+.signature-block {
+    background: rgba(255,255,255,0.02);
+    border: 0.5px solid rgba(255,255,255,0.07);
+    border-radius: 3px;
+    padding: 4mm 5mm;
+    margin-bottom: 5mm;
+}
+.signature-label {
+    font-size: 6.5px;
+    font-weight: bold;
+    letter-spacing: 0.2em;
+    color: rgba(200,135,58,0.6);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.signature-value {
+    font-size: 6px;
+    color: rgba(255,255,255,0.25);
+    word-break: break-all;
+    line-height: 1.7;
+    font-family: "DejaVu Sans Mono", monospace;
+}
+
+/* ── Verify instructions ──────────────────────────────────────────────── */
+.verify-block {
+    text-align: center;
+    padding: 5mm 0 4mm;
+    border-top: 0.5px solid rgba(200,135,58,0.2);
+    margin-top: 5mm;
+}
+.verify-code-label {
+    font-size: 7px;
+    font-weight: bold;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(200,135,58,0.55);
+    margin-bottom: 4px;
+}
+.verify-instruction {
+    font-size: 7.5px;
+    color: rgba(255,255,255,0.22);
+    margin-bottom: 6px;
+    line-height: 1.6;
+}
+.verify-code {
+    font-size: 12px;
+    font-weight: bold;
+    font-family: "DejaVu Sans Mono", monospace;
+    color: #E8A850;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+.verify-url {
+    font-size: 7.5px;
+    color: rgba(255,255,255,0.18);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────── */
+.footer {
+    text-align: center;
+    padding-top: 5mm;
+    margin-top: 5mm;
+    border-top: 0.5px solid rgba(255,255,255,0.06);
+}
+.footer .brand-footer {
+    font-size: 7px;
+    font-weight: bold;
+    letter-spacing: 0.16em;
+    color: rgba(200,135,58,0.4);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+}
+.footer p {
+    font-size: 6.5px;
+    color: rgba(255,255,255,0.16);
+    line-height: 1.9;
+}
+
 </style>
 </head>
 <body>
 <div class="page">
-<div class="watermark">{$c->owner_name}</div>
 
-<div class="qr">
-<img src="{$qrImage}" width="90" height="90" />
-<div class="small">Scan to verify</div>
-</div>
+    <div class="border-outer"></div>
+    <div class="border-inner"></div>
 
-<h1>Certificate of Investment</h1>
+    <!-- Header -->
+    <div class="header">
+        <div class="header-bar"></div>
+        <div class="brand">SproutVest</div>
+        <div class="cert-title">Certificate of Investment</div>
+        <div class="cert-subtitle">Fractional Land Investment &nbsp;&middot;&nbsp; Verified Digital Certificate</div>
+    </div>
 
-<p class="small">This certifies that</p>
-<p class="big">{$c->owner_name}</p>
+    <div class="body">
 
-<p class="small">owns</p>
-<p class="big">{$c->units} Units</p>
+        <!-- Declaration -->
+        <div class="declaration">
+            <div class="intro">This is to certify that</div>
+            <div class="owner-name">{$owner}</div>
+            <div class="verb">is the registered holder of</div>
+            <div class="unit-count">{$units}</div>
+            <div class="unit-label">Units</div>
+            <div class="in-label">in</div>
+            <div class="property-name">{$title}</div>
+            <div class="property-location">{$location}</div>
+        </div>
 
-<p>{$c->property_title}</p>
-<p class="small">{$c->property_location}</p>
+        <div class="divider"></div>
 
-<hr>
+        <!-- Property & transaction details -->
+        <table class="details-table">
+            <tr>
+                <td class="label">Certificate No.</td>
+                <td class="value">{$certNumber}</td>
+            </tr>
+            <tr>
+                <td class="label">Land Reference</td>
+                <td class="value">{$plotIdentifier}</td>
+            </tr>
+            <tr>
+                <td class="label">Tenure</td>
+                <td class="value">{$tenure}</td>
+            </tr>
+            <tr>
+                <td class="label">Purchase Reference</td>
+                <td class="value">{$purchaseRef}</td>
+            </tr>
+            <tr>
+                <td class="label">Total Invested</td>
+                <td class="value-highlight">{$total}</td>
+            </tr>
+            <tr>
+                <td class="label">Issue Date</td>
+                <td class="value">{$issueDate}</td>
+            </tr>
+            {$updatedRow}
+            <tr>
+                <td class="label">LGA</td>
+                <td class="value">{$lga}</td>
+            </tr>
+            <tr>
+                <td class="label">State</td>
+                <td class="value">{$state}</td>
+            </tr>
+        </table>
 
-<p>Certificate: {$c->cert_number}</p>
-<p>Total Invested: {$total}</p>
-<p>Date: {$c->issued_at}</p>
+        <div class="divider"></div>
 
-<hr>
+        <!-- Digital signature -->
+        <div class="signature-block">
+            <div class="signature-label">Digital Signature (SHA-256 HMAC)</div>
+            <div class="signature-value">{$signature}</div>
+        </div>
 
-<p class="small">Signature:</p>
-<p class="small">{$c->digital_signature}</p>
+        <!-- Verification instructions -->
+        <div class="verify-block">
+            <div class="verify-code-label">To Verify This Certificate</div>
+            <div class="verify-instruction">
+                Visit the address below and enter the certificate number exactly as printed.
+            </div>
+            <div class="verify-code">{$certNumber}</div>
+            <div class="verify-url">{$verifyUrl}</div>
+        </div>
 
-</div>
+        <!-- Footer -->
+        <div class="footer">
+            <div class="brand-footer">SproutVest Technologies Ltd</div>
+            <p>This certificate is digitally issued and verifiable at the address above.</p>
+            <p>info@sproutvest.com</p>
+        </div>
+
+    </div><!-- /.body -->
+</div><!-- /.page -->
 </body>
 </html>
 HTML;

@@ -115,30 +115,22 @@
                   // My activity
                 Route::get('/my/listings', [MarketplaceController::class, 'myListings']);
                 Route::get('/my/offers',   [MarketplaceController::class, 'myOffers']);
-                Route::get('/my/escrows',  [MarketplaceController::class, 'myEscrows']);
-        
+                Route::get('/marketplace/my-transactions', [MarketplaceController::class, 'myTransactions']);
+
                 // Listings CRUD
                 Route::post('/',              [MarketplaceController::class, 'store']);
                 Route::patch('/{listing}',    [MarketplaceController::class, 'update']);
                 Route::delete('/{listing}',   [MarketplaceController::class, 'destroy']);
         
-                // Offers
-                Route::post('/{listing}/offers',                         [MarketplaceController::class, 'makeOffer']);
-                Route::patch('/{listing}/offers/{offer}/accept',         [MarketplaceController::class, 'acceptOffer']);
-                Route::patch('/{listing}/offers/{offer}/reject',         [MarketplaceController::class, 'rejectOffer']);
-                Route::patch('/{listing}/offers/{offer}/withdraw',       [MarketplaceController::class, 'withdrawOffer']);
+                 // Offers
+                Route::post('/{listing}/offers',                        [MarketplaceController::class, 'makeOffer']);
+                Route::patch('/{listing}/offers/{offer}/accept',        [MarketplaceController::class, 'acceptOffer'])->middleware('check.pin');
+                Route::patch('/{listing}/offers/{offer}/reject',        [MarketplaceController::class, 'rejectOffer']);
+                Route::patch('/{listing}/offers/{offer}/withdraw',      [MarketplaceController::class, 'withdrawOffer']);
         
                 // Chat
                 Route::get('/{listing}/messages',  [MarketplaceController::class, 'messages']);
-                Route::post('/{listing}/messages', [MarketplaceController::class, 'sendMessage']);
-        
-                // Escrow
-                Route::get('/escrow/{escrow}',           [MarketplaceController::class, 'showEscrow']);
-                Route::post('/escrow/{escrow}/pay',      [MarketplaceController::class, 'payEscrow'])->middleware('check.pin');
-                Route::post('/escrow/{escrow}/dispute',  [MarketplaceController::class, 'disputeEscrow']);
-        
-                // Admin
-                Route::post('/escrow/{escrow}/complete', [MarketplaceController::class, 'completeEscrow'])->middleware('admin');
+                Route::post('/{listing}/messages', [MarketplaceController::class, 'sendMessage']);        
             });
 
             // Portfolio
