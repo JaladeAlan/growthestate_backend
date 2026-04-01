@@ -75,6 +75,10 @@ class CertificateService
         return $certificate->fresh();
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Verify a certificate by cert_number (public, no auth).
+    // Returns the Certificate model when active + signature matches, else null.
+    // ─────────────────────────────────────────────────────────────────────────
     public function verify(string $certNumber): ?Certificate
     {
         $cert = Certificate::where('cert_number', $certNumber)
@@ -90,6 +94,22 @@ class CertificateService
         );
 
         return hash_equals($expected, $cert->digital_signature) ? $cert : null;
+    }
+
+    public function regenerateSignature(Certificate $certificate): void
+    {
+        $certificate->update([
+            'digital_signature' => $this->generateSignature(
+                $certificate->cert_number,
+                $certificate->purchase_reference,
+                $certificate->owner_name
+            ),
+        ]);
+
+        Log::info('Certificate signature regenerated', [
+            'cert_id'     => $certificate->id,
+            'cert_number' => $certificate->cert_number,
+        ]);
     }
 
     public function regeneratePdf(Certificate $certificate): string
@@ -164,21 +184,6 @@ class CertificateService
         return "private/certificates/{$filename}";
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // HTML TEMPLATE
-    //
-    // Key Dompdf layout rules applied here:
-    //   • Use px throughout — Dompdf's mm/cm support is unreliable inside
-    //     inline styles and causes the overflow you were seeing.
-    //   • A4 portrait at 96 dpi = 794 × 1123 px usable canvas.
-    //   • We set an explicit width on <body> and every top-level block so
-    //     Dompdf never has to guess the containing-block width.
-    //   • Avoid position:absolute for decorative borders — use a wrapping
-    //     table-based border instead (Dompdf absolute positioning is buggy
-    //     with page breaks and overflows).
-    //   • word-break / overflow-wrap on long monospace strings (signature,
-    //     cert number, purchase ref) so they never bleed past the right edge.
-    // ─────────────────────────────────────────────────────────────────────────
     private function buildHtml(Certificate $c): string
     {
         $issueDate = $c->issued_at
@@ -223,14 +228,6 @@ class CertificateService
 <meta charset="UTF-8">
 <style>
 
-/*
- * Dompdf A4 portrait at default 96 dpi:
- *   Full page  = 794 × 1123 px
- *   We give the body 750 px wide and let Dompdf centre it.
- *   All horizontal measurements are set in px so Dompdf
- *   never misinterprets unit conversions.
- */
-
 @page {
     size: A4 portrait;
     margin: 22px 22px 22px 22px;
@@ -246,11 +243,10 @@ body {
     font-family: "DejaVu Sans", sans-serif;
     background: #0D1F1A;
     color: #FFFFFF;
-    width: 750px;       /* 794 - 2×22 px margin */
+    width: 750px;
     font-size: 8px;
 }
 
-/* ── Outer gold frame ────────────────────────────────────────────────── */
 .frame {
     width: 750px;
     border: 1.8px solid #C8873A;
@@ -262,13 +258,11 @@ body {
     padding: 0;
 }
 
-/* ── Header ─────────────────────────────────────────────────────────── */
 .header {
     background: #091510;
     text-align: center;
     padding: 22px 28px 18px;
     border-bottom: 1px solid rgba(200,135,58,0.22);
-    position: relative;
 }
 .header-bar {
     height: 3px;
@@ -297,19 +291,16 @@ body {
     text-transform: uppercase;
 }
 
-/* ── Body wrapper ────────────────────────────────────────────────────── */
 .body {
     padding: 18px 22px 16px;
 }
 
-/* ── Gold divider ────────────────────────────────────────────────────── */
 .divider {
     height: 0.5px;
     background: rgba(200,135,58,0.28);
     margin: 14px 0;
 }
 
-/* ── Declaration ─────────────────────────────────────────────────────── */
 .declaration {
     text-align: center;
     padding: 6px 0;
@@ -364,11 +355,10 @@ body {
     color: rgba(255,255,255,0.32);
 }
 
-/* ── Details table ────────────────────────────────────────────────────── */
 .details-table {
     width: 100%;
     border-collapse: collapse;
-    table-layout: fixed;  /* prevents any column from blowing out */
+    table-layout: fixed;
 }
 .details-table td {
     padding: 5px 0;
@@ -401,7 +391,6 @@ body {
     text-align: right;
 }
 
-/* ── Signature block ──────────────────────────────────────────────────── */
 .signature-block {
     background: rgba(255,255,255,0.02);
     border: 0.5px solid rgba(255,255,255,0.07);
@@ -427,7 +416,6 @@ body {
     width: 100%;
 }
 
-/* ── Verify block ─────────────────────────────────────────────────────── */
 .verify-block {
     text-align: center;
     padding: 12px 0 10px;
@@ -462,7 +450,6 @@ body {
     color: rgba(255,255,255,0.18);
 }
 
-/* ── Footer ───────────────────────────────────────────────────────────── */
 .footer {
     text-align: center;
     padding-top: 12px;
@@ -490,7 +477,6 @@ body {
 <div class="frame">
 <div class="frame-inner">
 
-    <!-- Header -->
     <div class="header">
         <div class="header-bar"></div>
         <div class="brand">SproutVest</div>
@@ -498,10 +484,8 @@ body {
         <div class="cert-subtitle">Fractional Land Investment &nbsp;&middot;&nbsp; Verified Digital Certificate</div>
     </div>
 
-    <!-- Body -->
     <div class="body">
 
-        <!-- Declaration -->
         <div class="declaration">
             <div class="intro">This is to certify that</div>
             <div class="owner-name">{$owner}</div>
@@ -515,7 +499,6 @@ body {
 
         <div class="divider"></div>
 
-        <!-- Details -->
         <table class="details-table">
             <tr>
                 <td class="label">Certificate No.</td>
@@ -554,13 +537,11 @@ body {
 
         <div class="divider"></div>
 
-        <!-- Digital signature -->
         <div class="signature-block">
             <div class="signature-label">Digital Signature (SHA-256 HMAC)</div>
             <div class="signature-value">{$signature}</div>
         </div>
 
-        <!-- Verify -->
         <div class="verify-block">
             <div class="verify-code-label">To Verify This Certificate</div>
             <div class="verify-instruction">Visit the address below and enter the certificate number exactly as printed.</div>
@@ -568,17 +549,15 @@ body {
             <div class="verify-url">{$verifyUrl}</div>
         </div>
 
-        <!-- Footer -->
         <div class="footer">
-            <div class="brand-footer">SproutVest Technologies Ltd</div>
+            <div class="brand-footer">SproutVest GSE Ltd</div>
             <p>This certificate is digitally issued and verifiable at the address above.</p>
             <p>info@sproutvest.com</p>
         </div>
 
-    </div><!-- /.body -->
-
-</div><!-- /.frame-inner -->
-</div><!-- /.frame -->
+    </div>
+</div>
+</div>
 
 </body>
 </html>
