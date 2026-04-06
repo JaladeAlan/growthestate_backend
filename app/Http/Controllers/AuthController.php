@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Illuminate\Validation\ValidationException;
@@ -17,6 +18,10 @@ use App\Mail\ResetPasswordEmail;
 
 class AuthController extends Controller
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    // HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
+
     private function sendSuccessResponse($data, $message = 'Success', $status = 200)
     {
         return response()->json([
@@ -33,63 +38,52 @@ class AuthController extends Controller
         ], $status);
     }
 
-    // public function me()
-    // {
-    //     try {
-    //         $user = auth()->user();
+    /**
+     * Shared rate-limiter check for sensitive unauthenticated endpoints.
+     * Key: sha1(email|ip) — 3 attempts per 15 minutes.
+     * Returns a 429 response on breach, or null if the request is allowed.
+     */
+    private function checkSensitiveLimit(Request $request, string $email): ?\Illuminate\Http\JsonResponse
+    {
+        $key = 'sensitive:' . sha1(strtolower(trim($email)) . '|' . $request->ip());
 
-    //         if (! $user) {
-    //             return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-    //         }
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            return response()->json([
+                'message'     => 'Too many attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
+        }
 
-    //         return response()->json([
-    //             'success' => true,
-    //             'user'    => [
-    //                 'id'                     => $user->id,
-    //                 'uid'                    => $user->uid,
-    //                 'name'                   => $user->name,
-    //                 'email'                  => $user->email,
-    //                 'email_verified_at'      => $user->email_verified_at,
-    //                 'transaction_pin'        => (bool) $user->transaction_pin,
-    //                 'is_admin'               => $user->is_admin,
-    //                 'created_at'             => $user->created_at,
-    //                 'updated_at'             => $user->updated_at,
+        RateLimiter::hit($key, 900); // 15-minute decay
+        return null;
+    }
 
-    //                 // ── Balances ──────────────────────────────────────────
-    //                 'balance_kobo'           => $user->balance_kobo,
-    //                 'balance_naira'          => $user->balance_kobo / 100,
-    //                 'rewards_balance_kobo'   => $user->rewards_balance_kobo,
-    //                 'rewards_balance_naira'  => $user->rewards_balance_kobo / 100,
-    //                 'total_spendable_kobo'   => $user->total_spendable_kobo,
-    //                 'total_spendable_naira'  => $user->total_spendable_kobo / 100,
+    /**
+     * Clear the sensitive rate-limit key on success so legitimate users
+     * are not permanently locked for 15 minutes after one successful action.
+     */
+    private function clearSensitiveLimit(Request $request, string $email): void
+    {
+        $key = 'sensitive:' . sha1(strtolower(trim($email)) . '|' . $request->ip());
+        RateLimiter::clear($key);
+    }
 
-    //                 // ── Bank ─────────────────────────────────────────────
-    //                 'bank_name'              => $user->bank_name,
-    //                 'bank_code'              => $user->bank_code,
-    //                 'account_number'         => $user->account_number,
-    //                 'account_name'           => $user->account_name,
-
-    //                 // ── Referral ─────────────────────────────────────────
-    //                 'referral_code'          => $user->referral_code,
-
-    //                 // ── KYC ──────────────────────────────────────────────
-    //                 'is_kyc_verified'        => $user->is_kyc_verified,
-    //                 'kyc_status'             => $user->kyc_status,
-    //             ],
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         Log::error('Error fetching user profile', ['error' => $e->getMessage()]);
-
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Could not fetch user',
-    //             'error'   => config('app.debug') ? $e->getMessage() : null,
-    //         ], 500);
-    //     }
-    // }
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGISTER  POST /api/register
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function register(Request $request)
     {
+        // Rate limit: 5 registrations per hour per IP
+        $ipKey = 'register:' . $request->ip();
+
+        if (RateLimiter::tooManyAttempts($ipKey, 5)) {
+            return response()->json([
+                'message'     => 'Too many registration attempts from this IP. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($ipKey),
+            ], 429);
+        }
+
         try {
             $request->validate([
                 'name'          => 'required|string|max:255',
@@ -134,10 +128,13 @@ class AuthController extends Controller
 
             $token = JWTAuth::fromUser($user);
 
+            // Count this IP hit only after a successful registration
+            RateLimiter::hit($ipKey, 3600);
+
             try {
                 Mail::to($user->email)->queue(new VerifyEmailMail($user, $verificationCode));
             } catch (\Exception $e) {
-                Log::error("Failed to send verification email to user {$user->id}: " . $e->getMessage());
+                Log::error("Failed to queue verification email to user {$user->id}: " . $e->getMessage());
             }
 
             return $this->sendSuccessResponse(
@@ -151,10 +148,14 @@ class AuthController extends Controller
             return $this->sendErrorResponse(
                 'Registration failed. Please try again later.',
                 500,
-                ['exception' => $e->getMessage()]
+                config('app.debug') ? ['exception' => $e->getMessage()] : []
             );
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LOGIN  POST /api/login
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function login(Request $request)
     {
@@ -167,11 +168,23 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Validation errors occurred', 422, $e->validator->errors());
         }
 
+        // Rate limit: 5 failed attempts per 15 minutes per email+IP
+        $key = 'login:' . sha1(strtolower(trim($request->email)) . '|' . $request->ip());
+
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'message'     => 'Too many login attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
+        }
+
         $credentials = $request->only('email', 'password');
         $user        = User::where('email', $request->email)->first();
 
         if (! $user) {
-            return $this->sendErrorResponse('User not found', 404);
+            RateLimiter::hit($key, 900);
+            // Intentionally vague to prevent user enumeration
+            return $this->sendErrorResponse('Invalid credentials', 401);
         }
 
         if (! $user->hasVerifiedEmail()) {
@@ -180,14 +193,22 @@ class AuthController extends Controller
 
         try {
             if (! $token = JWTAuth::attempt($credentials)) {
+                RateLimiter::hit($key, 900);
                 return $this->sendErrorResponse('Invalid credentials', 401);
             }
         } catch (JWTException $e) {
             return $this->sendErrorResponse('Could not create token', 500, ['exception' => $e->getMessage()]);
         }
 
+        // Clear the limiter on successful login
+        RateLimiter::clear($key);
+
         return $this->sendSuccessResponse(['token' => $token], 'Login successful');
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LOGOUT  POST /api/logout
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function logout()
     {
@@ -199,6 +220,10 @@ class AuthController extends Controller
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // REFRESH  POST /api/refresh
+    // ─────────────────────────────────────────────────────────────────────────
+
     public function refresh()
     {
         try {
@@ -209,11 +234,22 @@ class AuthController extends Controller
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASSWORD RESET — SEND CODE  POST /api/password/reset/code
+    // ─────────────────────────────────────────────────────────────────────────
+
     public function sendPasswordResetCode(Request $request)
     {
         $request->validate(['email' => 'required|string|email']);
 
+        // Rate limit before doing any DB work
+        if ($limited = $this->checkSensitiveLimit($request, $request->email)) {
+            return $limited;
+        }
+
         $user = User::where('email', $request->email)->first();
+
+        // Always return the same message to prevent user enumeration
         if (! $user) {
             return $this->sendSuccessResponse([], 'If that email is registered, a reset code has been sent.');
         }
@@ -226,27 +262,37 @@ class AuthController extends Controller
         $user->save();
 
         try {
-            Mail::to($user->email)->send(new ResetPasswordEmail($user, $resetCode));
+            // Queued — no longer blocks the request thread
+            Mail::to($user->email)->queue(new ResetPasswordEmail($user, $resetCode));
         } catch (\Exception $e) {
+            Log::error('Failed to queue password reset email', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+
             return $this->sendErrorResponse(
                 'Failed to send password reset email. Please try again.',
-                500,
-                ['exception' => $e->getMessage()]
+                500
             );
         }
 
         return $this->sendSuccessResponse([], 'If that email is registered, a reset code has been sent.');
     }
 
-    /**
-     * Verify reset code — for UX only (shows user the code is valid).
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASSWORD RESET — VERIFY CODE  POST /api/password/reset/verify
+    // ─────────────────────────────────────────────────────────────────────────
+
     public function verifyPasswordResetCode(Request $request)
     {
         $request->validate([
             'email'      => 'required|string|email',
             'reset_code' => 'required|string|size:6',
         ]);
+
+        if ($limited = $this->checkSensitiveLimit($request, $request->email)) {
+            return $limited;
+        }
 
         $user = User::where('email', $request->email)->first();
 
@@ -260,18 +306,18 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Invalid or expired reset code.', 400);
         }
 
-        // Mark as verified so the UI can proceed to the new-password step.
-        // resetPassword() will re-validate independently.
         $user->password_reset_verified = true;
         $user->save();
+
+        $this->clearSensitiveLimit($request, $request->email);
 
         return $this->sendSuccessResponse([], 'Reset code verified. You can now reset your password.');
     }
 
-    /**
-     * Reset password — atomically re-validates the code and expiry inside a
-     * locked transaction to prevent TOCTOU race conditions.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // PASSWORD RESET — SET NEW PASSWORD  POST /api/password/reset
+    // ─────────────────────────────────────────────────────────────────────────
+
     public function resetPassword(Request $request)
     {
         try {
@@ -292,9 +338,12 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Password validation errors occurred', 422, $e->validator->errors());
         }
 
+        if ($limited = $this->checkSensitiveLimit($request, $request->email)) {
+            return $limited;
+        }
+
         try {
             DB::transaction(function () use ($request) {
-                // Lock the user row — concurrent resets queue behind this one
                 $user = User::where('email', $request->email)
                     ->lockForUpdate()
                     ->first();
@@ -303,7 +352,6 @@ class AuthController extends Controller
                     abort(400, 'Invalid request.');
                 }
 
-                // Expiry is the primary guard — checked first
                 if (
                     ! $user->password_reset_code ||
                     ! $user->password_reset_code_expires_at ||
@@ -312,7 +360,6 @@ class AuthController extends Controller
                     abort(400, 'Reset code has expired. Please request a new one.');
                 }
 
-                // Code integrity check
                 if (! Hash::check((string) $request->reset_code, $user->password_reset_code)) {
                     abort(400, 'Invalid reset code.');
                 }
@@ -324,9 +371,8 @@ class AuthController extends Controller
                 $user->save();
             });
         } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
-            throw $e; // Let abort() responses pass through
+            throw $e;
         } catch (\Exception $e) {
-            // Re-surface abort() messages as proper error responses
             if ($e->getCode() >= 400 && $e->getCode() < 500) {
                 return $this->sendErrorResponse($e->getMessage(), $e->getCode());
             }
@@ -334,8 +380,14 @@ class AuthController extends Controller
             return $this->sendErrorResponse('An unexpected error occurred. Please try again.', 500);
         }
 
+        $this->clearSensitiveLimit($request, $request->email);
+
         return $this->sendSuccessResponse([], 'Password has been reset successfully.');
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EMAIL VERIFICATION  POST /api/email/verify/code
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function verifyEmailCode(Request $request)
     {
@@ -343,6 +395,10 @@ class AuthController extends Controller
             'email'             => 'required|string|email',
             'verification_code' => 'required|string|size:6',
         ]);
+
+        if ($limited = $this->checkSensitiveLimit($request, $request->email)) {
+            return $limited;
+        }
 
         $user = User::where('email', $request->email)->first();
 
@@ -364,17 +420,29 @@ class AuthController extends Controller
         $user->verification_code_expiry = null;
         $user->save();
 
+        $this->clearSensitiveLimit($request, $request->email);
+
         return $this->sendSuccessResponse([], 'Email verified successfully.');
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RESEND VERIFICATION  POST /api/email/resend-verification
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function resendVerification(Request $request)
     {
         $request->validate(['email' => 'required|string|email']);
 
+        // Rate limit first — prevents email flooding
+        if ($limited = $this->checkSensitiveLimit($request, $request->email)) {
+            return $limited;
+        }
+
         $user = User::where('email', $request->email)->first();
 
         if (! $user) {
-            return $this->sendErrorResponse('User not found', 404);
+            // Same message as success — prevent enumeration
+            return $this->sendSuccessResponse([], 'If that email is registered and unverified, a new code has been sent.');
         }
 
         if ($user->hasVerifiedEmail()) {
@@ -387,17 +455,26 @@ class AuthController extends Controller
         $user->save();
 
         try {
-            Mail::to($user->email)->send(new VerifyEmailMail($user, $verificationCode));
+            // Queued — was previously synchronous send()
+            Mail::to($user->email)->queue(new VerifyEmailMail($user, $verificationCode));
         } catch (\Exception $e) {
+            Log::error('Failed to queue verification email', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+
             return $this->sendErrorResponse(
                 'Failed to send verification email. Please try again.',
-                500,
-                ['exception' => $e->getMessage()]
+                500
             );
         }
 
         return $this->sendSuccessResponse([], 'A new verification code has been sent to your email.');
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHANGE PASSWORD  POST /api/user/change-password
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function changePassword(Request $request)
     {
@@ -405,6 +482,16 @@ class AuthController extends Controller
 
         if (! $user) {
             return $this->sendErrorResponse('Unauthenticated.', 401);
+        }
+
+        // Rate limit authenticated users: 5 attempts per 15 minutes
+        $key = 'change-password:' . $user->id;
+
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'message'     => 'Too many password change attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
         }
 
         try {
@@ -426,6 +513,7 @@ class AuthController extends Controller
 
         try {
             if (! Hash::check($request->current_password, $user->password)) {
+                RateLimiter::hit($key, 900);
                 return $this->sendErrorResponse('Current password is incorrect.', 400);
             }
 
@@ -435,6 +523,8 @@ class AuthController extends Controller
 
             $user->password = Hash::make($request->new_password);
             $user->save();
+
+            RateLimiter::clear($key);
 
             return $this->sendSuccessResponse([], 'Password has been changed successfully.');
         } catch (\Exception $e) {
