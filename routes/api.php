@@ -70,6 +70,14 @@ Route::get('/support/faqs', [SupportController::class, 'faqs']);
 Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTicket'])
     ->middleware('throttle:5,10');
 
+// ── Public blog ───────────────────────────────────────────────────────────────
+Route::prefix('blog')->group(function () {
+    Route::get('/',              [BlogController::class, 'index']);
+    Route::get('/categories',   [BlogController::class, 'categories']);
+    Route::get('/tags',         [BlogController::class, 'tags']);
+    Route::get('/{slug}',       [BlogController::class, 'show']);
+});
+
 // ── Waitlist ──────────────────────────────────────────────────────────────────
 Route::post('/waitlist',       [WaitlistController::class, 'store'])->middleware('throttle:5,10');
 Route::post('/waitlist/check', [WaitlistController::class, 'check'])->middleware('throttle:10,1');
@@ -247,6 +255,22 @@ Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
     Route::patch('/support/tickets/{ticket}/status',            [AdminSupportController::class, 'updateStatus']);
     Route::delete('/support/tickets/{ticket}',                  [AdminSupportController::class, 'destroy']);
     Route::get('/support/stats',                                [SupportController::class, 'adminStats']);
+
+    // Posts
+    Route::get('/blog',                  [BlogController::class, 'adminIndex']);
+    Route::get('/blog/{blogPost}',        [BlogController::class, 'adminShow']);
+    Route::post('/blog',                  [BlogController::class, 'store']);
+    Route::post('/blog/{blogPost}',       [BlogController::class, 'update']);
+    Route::delete('/blog/{blogPost}',     [BlogController::class, 'destroy']);
+
+    // Categories
+    Route::post('/blog/categories',                       [BlogController::class, 'storeCategory']);
+    Route::patch('/blog/categories/{blogCategory}',       [BlogController::class, 'updateCategory']);
+    Route::delete('/blog/categories/{blogCategory}',      [BlogController::class, 'destroyCategory']);
+
+    // Tags
+    Route::post('/blog/tags',                             [BlogController::class, 'storeTag']);
+    Route::delete('/blog/tags/{blogTag}',                 [BlogController::class, 'destroyTag']);
 
     // ── Withdrawals ───────────────────────────────────────────────────────────
     Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
