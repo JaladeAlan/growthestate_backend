@@ -21,6 +21,7 @@
     use App\Http\Controllers\WithdrawalController;
     use App\Http\Controllers\CertificateController;
     use App\Http\Controllers\MarketplaceController;
+    use App\Http\Controllers\WaitlistController;
     use Illuminate\Support\Facades\Route;
 
 
@@ -44,6 +45,11 @@
 
     Route::get('/support/faqs',           [SupportController::class, 'faqs']);
     Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTicket']);
+
+    Route::middleware('throttle:10,1')->group(function () {
+    Route::post('/waitlist',       [WaitlistController::class, 'store']);
+    Route::post('/waitlist/check', [WaitlistController::class, 'check']);
+    });
 
     // Public Certificate verification 
     Route::get('/verify/{certNumber}', [CertificateController::class, 'verify']);
@@ -234,7 +240,12 @@
                     Route::get('/',                          [CertificateController::class, 'adminIndex']);
                     Route::post('/{certificate}/revoke',     [CertificateController::class, 'revoke']);
                     Route::post('/{certificate}/regenerate', [CertificateController::class, 'regenerate']);
-                });                
+                });        
+                
+                Route::get('/waitlist',                     [WaitlistController::class, 'index']);
+                Route::get('/waitlist/stats',               [WaitlistController::class, 'stats']);
+                Route::post('/waitlist/{waitlist}/invite',  [WaitlistController::class, 'invite']);
+                Route::delete('/waitlist/{waitlist}',       [WaitlistController::class, 'destroy']);
             });
         });
     });
