@@ -271,6 +271,32 @@ class BlogController extends Controller
     // ADMIN — CATEGORIES & TAGS
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * GET /admin/blog/categories
+     * All categories regardless of published post count — for the admin manager.
+     */
+    public function adminCategories()
+    {
+        $categories = BlogCategory::withCount('posts')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $categories]);
+    }
+
+    /**
+     * GET /admin/blog/tags
+     * All tags regardless of published post count — for the admin manager.
+     */
+    public function adminTags()
+    {
+        $tags = BlogTag::withCount('posts')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $tags]);
+    }
+
     public function storeCategory(Request $request)
     {
         $data = $request->validate([

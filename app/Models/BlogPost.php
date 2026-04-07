@@ -6,59 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BlogCategory
-// ─────────────────────────────────────────────────────────────────────────────
-
-class BlogCategory extends Model
-{
-    protected $fillable = ['name', 'slug', 'description'];
-
-    public function posts()
-    {
-        return $this->hasMany(BlogPost::class, 'category_id');
-    }
-
-    // Auto-generate slug when creating
-    protected static function booted(): void
-    {
-        static::creating(function ($category) {
-            if (empty($category->slug)) {
-                $category->slug = Str::slug($category->name);
-            }
-        });
-    }
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BlogTag
-// ─────────────────────────────────────────────────────────────────────────────
-
-class BlogTag extends Model
-{
-    protected $fillable = ['name', 'slug'];
-
-    public function posts()
-    {
-        return $this->belongsToMany(BlogPost::class, 'blog_post_tag', 'blog_tag_id', 'blog_post_id');
-    }
-
-    protected static function booted(): void
-    {
-        static::creating(function ($tag) {
-            if (empty($tag->slug)) {
-                $tag->slug = Str::slug($tag->name);
-            }
-        });
-    }
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// BlogPost
-// ─────────────────────────────────────────────────────────────────────────────
-
 class BlogPost extends Model
 {
     protected $fillable = [

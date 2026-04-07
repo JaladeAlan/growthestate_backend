@@ -20,6 +20,7 @@ use App\Http\Controllers\AdminSupportController;
 use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\CertificateController;
 use App\Http\Controllers\WaitlistController;
+use App\Http\Controllers\BlogController;
 
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
@@ -145,7 +146,7 @@ Route::middleware(['jwt.auth'])->group(function () {
         Route::get('/withdrawals/{reference}',      [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // ── Transactions ──────────────────────────────────────────────────────
-        Route::get('/transactions/user',            [TransactionController::class, 'index']);
+        Route::get('/transactions/user',            [TransactionController::class, 'userTransactions']);
         Route::post('/lands/{land}/purchase',       [TransactionController::class, 'purchase']);
         Route::post('/lands/{land}/sell',           [TransactionController::class, 'sell']);
 
@@ -256,21 +257,34 @@ Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
     Route::delete('/support/tickets/{ticket}',                  [AdminSupportController::class, 'destroy']);
     Route::get('/support/stats',                                [SupportController::class, 'adminStats']);
 
-    // Posts
-    Route::get('/blog',                  [BlogController::class, 'adminIndex']);
-    Route::get('/blog/{blogPost}',        [BlogController::class, 'adminShow']);
-    Route::post('/blog',                  [BlogController::class, 'store']);
-    Route::post('/blog/{blogPost}',       [BlogController::class, 'update']);
-    Route::delete('/blog/{blogPost}',     [BlogController::class, 'destroy']);
+   Route::prefix('blog')->group(function () {
 
-    // Categories
-    Route::post('/blog/categories',                       [BlogController::class, 'storeCategory']);
-    Route::patch('/blog/categories/{blogCategory}',       [BlogController::class, 'updateCategory']);
-    Route::delete('/blog/categories/{blogCategory}',      [BlogController::class, 'destroyCategory']);
+    Route::get('/categories', [BlogController::class, 'adminCategories']);
+    Route::get('/tags', [BlogController::class, 'adminTags']);
 
-    // Tags
-    Route::post('/blog/tags',                             [BlogController::class, 'storeTag']);
-    Route::delete('/blog/tags/{blogTag}',                 [BlogController::class, 'destroyTag']);
+    // ── Categories ──
+    Route::prefix('categories')->group(function () {
+        Route::post('/', [BlogController::class, 'storeCategory']);
+        Route::patch('/{blogCategory}', [BlogController::class, 'updateCategory']);
+        Route::delete('/{blogCategory}', [BlogController::class, 'destroyCategory']);
+    });
+
+    // ── Tags ──
+    Route::prefix('tags')->group(function () {
+        Route::post('/', [BlogController::class, 'storeTag']);
+        Route::delete('/{blogTag}', [BlogController::class, 'destroyTag']);
+    });
+
+    // ── Posts ──
+    Route::get('/', [BlogController::class, 'adminIndex']);
+    Route::post('/', [BlogController::class, 'store']);
+
+    Route::prefix('post')->group(function () {
+        Route::get('/{blogPost}', [BlogController::class, 'adminShow'])->whereNumber('blogPost');
+        Route::post('/{blogPost}', [BlogController::class, 'update'])->whereNumber('blogPost');
+        Route::delete('/{blogPost}', [BlogController::class, 'destroy'])->whereNumber('blogPost');
+        });
+    });
 
     // ── Withdrawals ───────────────────────────────────────────────────────────
     Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
