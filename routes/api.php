@@ -177,7 +177,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Support ───────────────────────────────────────────────────────────
         // AI chat: 20 per 10 min per user (also enforced in controller)
-        Route::post('/support/chat', [SupportController::class, 'chat'])
+        Route::post('/support/chat',                            [SupportController::class, 'chat'])
             ->middleware('throttle:20,10');
         Route::get('/support/tickets',                          [SupportController::class, 'indexTickets']);
         Route::post('/support/tickets',                         [SupportController::class, 'storeTicket'])
@@ -287,7 +287,20 @@ Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
     });
 
     // ── Withdrawals ───────────────────────────────────────────────────────────
-    Route::post('/withdrawals/retry', [WithdrawalController::class, 'retryPendingWithdrawals']);
+   Route::prefix('withdrawals')->group(function () {
+ 
+    // List withdrawals — filter by status, e.g. ?status=pending
+    Route::get('/', [WithdrawalController::class, 'adminIndex']);
+ 
+    // Approve a single withdrawal → triggers Paystack transfer
+    Route::post('/{id}/approve', [WithdrawalController::class, 'adminApprove']);
+ 
+    // Reject a single withdrawal → refunds user balance
+    Route::post('/{id}/reject', [WithdrawalController::class, 'adminReject']);
+ 
+    // Approve all pending withdrawals in one action
+    Route::post('/approve-all', [WithdrawalController::class, 'adminApproveAll']);
+   });
 
     // ── Referrals ─────────────────────────────────────────────────────────────
     Route::get('/referrals',        [ReferralController::class, 'adminIndex']);

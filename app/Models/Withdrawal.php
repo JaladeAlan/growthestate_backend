@@ -2,105 +2,91 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Withdrawal extends Model
 {
-    use HasFactory;
-
-    // ── Status constants ──────────────────────────────────────────────────────
-    const STATUS_PENDING    = 'pending';
-    const STATUS_PROCESSING = 'processing';
-    const STATUS_COMPLETED  = 'completed';
-    const STATUS_FAILED     = 'failed';
-
-    /** Statuses that are terminal — no further processing should occur. */
-    const TERMINAL_STATUSES = [
-        self::STATUS_COMPLETED,
-        self::STATUS_FAILED,
-    ];
-
-    // ── Table / fillable ──────────────────────────────────────────────────────
-
-    protected $table = 'withdrawals';
-
     protected $fillable = [
         'user_id',
-        'reference',
         'amount_kobo',
         'status',
-        'gateway',
-    ];
-
-    protected $attributes = [
-        'status' => self::STATUS_PENDING,
+        'reference',
+        'reviewed_by',
+        'reviewed_at',
+        'rejection_reason',
     ];
 
     protected $casts = [
         'amount_kobo' => 'integer',
+        'reviewed_at' => 'datetime',
     ];
 
-    // ── Relationships ─────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // RELATIONSHIPS
+    // ─────────────────────────────────────────────────────────────────────────
 
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    // ── Status helpers ────────────────────────────────────────────────────────
-
-    public function isPending(): bool
+    public function reviewer(): BelongsTo
     {
-        return $this->status === self::STATUS_PENDING;
+        return $this->belongsTo(User::class, 'reviewed_by');
     }
 
-    public function isProcessing(): bool
-    {
-        return $this->status === self::STATUS_PROCESSING;
-    }
-
-    public function isCompleted(): bool
-    {
-        return $this->status === self::STATUS_COMPLETED;
-    }
-
-    public function isFailed(): bool
-    {
-        return $this->status === self::STATUS_FAILED;
-    }
-
-    public function isTerminal(): bool
-    {
-        return in_array($this->status, self::TERMINAL_STATUSES, true);
-    }
-
-    // ── Scopes ────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // SCOPES
+    // ─────────────────────────────────────────────────────────────────────────
 
     public function scopePending($query)
     {
-        return $query->where('status', self::STATUS_PENDING);
+        return $query->where('status', 'pending');
     }
 
     public function scopeProcessing($query)
     {
-        return $query->where('status', self::STATUS_PROCESSING);
-    }
-
-    public function scopeCompleted($query)
-    {
-        return $query->where('status', self::STATUS_COMPLETED);
+        return $query->where('status', 'processing');
     }
 
     public function scopeFailed($query)
     {
-        return $query->where('status', self::STATUS_FAILED);
+        return $query->where('status', 'failed');
     }
 
-    // ── Accessors ─────────────────────────────────────────────────────────────
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', 'completed');
+    }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // ACCESSORS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Amount in Naira for display purposes.
+     */
     public function getAmountNairaAttribute(): float
     {
         return $this->amount_kobo / 100;
+    }
+
+    /**
+     * Whether this withdrawal can still be approved by an admin.
+     */
+    public function getIsApprovableAttribute(): bool
+    {
+        return $this->status === 'pending';
+    }
+
+    /**
+     * Whether this withdrawal can be rejected (refunded) by an admin.
+     * Failed withdrawals can also be rejected once admin verifies on Paystack
+     * that the transfer did not go through.
+     */
+    public function getIsRejectableAttribute(): bool
+    {
+        return in_array($this->status, ['pending', 'failed'], true);
     }
 }
