@@ -61,5 +61,6 @@ return [
         */
         'base_url'    => env('OPAY_BASE_URL', 'https://sandboxapi.opayweb.com'),
     ],
-
+    
+    'openai' => ['key' => env('OPENAI_API_KEY')]
 ];

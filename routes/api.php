@@ -187,6 +187,12 @@ Route::middleware(['jwt.auth'])->group(function () {
             ->middleware('throttle:20,10');
         Route::patch('/support/tickets/{ticket}/close',         [SupportController::class, 'closeTicket']);
 
+        Route::prefix('support/live-chat')->group(function () {
+            Route::post('/request',                     [LiveChatController::class, 'request']);
+            Route::post('/{ticket}/message',            [LiveChatController::class, 'sendMessage']);
+            Route::post('/{ticket}/typing',             [LiveChatController::class, 'typing']);
+        });
+
         // ── Marketplace ───────────────────────────────────────────────────────
         Route::get('/marketplace',                                          [MarketplaceController::class, 'index']);
         Route::get('/marketplace/my-listings',                              [MarketplaceController::class, 'myListings']);
