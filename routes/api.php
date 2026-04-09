@@ -21,6 +21,7 @@ use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\CertificateController;
 use App\Http\Controllers\WaitlistController;
 use App\Http\Controllers\BlogController;
+use App\Http\Controllers\LiveChatController;
 
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
