@@ -264,6 +264,15 @@ Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
     Route::delete('/support/tickets/{ticket}',                  [AdminSupportController::class, 'destroy']);
     Route::get('/support/stats',                                [SupportController::class, 'adminStats']);
 
+    // ── Live chat (agent) ─────────────────────────────────────────────────────
+    Route::prefix('live-chat')->group(function () {
+        Route::get('/queue',               [LiveChatController::class, 'agentQueue']);
+        Route::post('/{ticket}/claim',     [LiveChatController::class, 'agentClaim']);
+        Route::post('/{ticket}/message',   [LiveChatController::class, 'agentMessage']);
+        Route::post('/{ticket}/typing',    [LiveChatController::class, 'agentTyping']);
+        Route::post('/{ticket}/end',       [LiveChatController::class, 'agentEnd']);
+    });
+
    Route::prefix('blog')->group(function () {
 
     Route::get('/categories', [BlogController::class, 'adminCategories']);
