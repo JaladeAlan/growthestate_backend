@@ -20,6 +20,8 @@ COPY entrypoint.sh /entrypoint.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 RUN composer install --optimize-autoloader --no-dev \
+    && rm -f bootstrap/cache/packages.php bootstrap/cache/services.php \
+    && php artisan package:discover --ansi \
     && mkdir -p storage/app/public/seed/lands \
     && mkdir -p storage/framework/{cache,sessions,views} \
     && mkdir -p storage/logs \
@@ -33,7 +35,6 @@ RUN composer install --optimize-autoloader --no-dev \
 
 EXPOSE 8000
 
-# Switch to www-data AFTER all chown/chmod steps above.
 USER www-data
 
 CMD ["/entrypoint.sh"]

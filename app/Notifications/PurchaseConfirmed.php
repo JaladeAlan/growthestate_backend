@@ -35,7 +35,9 @@ class PurchaseConfirmed extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        return ['database', 'broadcast', 'mail'];
+        return ['database', 'broadcast', 
+        // 'mail'
+        ];
     }
 
     public function toDatabase($notifiable): array
