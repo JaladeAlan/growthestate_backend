@@ -26,10 +26,19 @@ use App\Http\Controllers\LiveChatController;
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\OpayWebhookController;
+use Illuminate\Support\Facades\Queue;
 
 // =============================================================================
 // PUBLIC — no authentication required
 // =============================================================================
+
+Route::get('/health', function () {
+    return response()->json([
+        'status'      => 'ok',
+        'queue_size'  => Queue::size('default'),
+        'timestamp'   => now(),
+    ]);
+});
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
