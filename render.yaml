@@ -28,21 +28,22 @@ services:
       - key: REVERB_HOST
         fromService:
           name: sproutvest-reverb
-          type: worker
+          type: web         
           property: host
       - key: REVERB_PORT
-        value: 8081
+        value: 443
       - key: REVERB_SCHEME
         value: https
 
   # ── Reverb WebSocket Server ───────────────────────────────────────────────────
-  - type: worker
+  - type: web                
     name: sproutvest-reverb
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: starter
     startCommand: php artisan reverb:start --host=0.0.0.0 --port=8081 --debug
+    healthCheckPath: /up     
     envVars:
       - fromGroup: reverb-credentials
       - key: APP_ENV

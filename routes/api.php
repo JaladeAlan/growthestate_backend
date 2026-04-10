@@ -40,6 +40,10 @@ Route::get('/health', function () {
     ]);
 });
 
+Route::get('/up', function () {
+    return response()->json(['status' => 'ok'], 200);
+});
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 // Registration: 5 per hour per IP (stops bulk account creation + email spam)
