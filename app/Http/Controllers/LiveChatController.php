@@ -237,17 +237,29 @@ class LiveChatController extends Controller
     // AGENT: QUEUE  —  GET /api/admin/live-chat/queue
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public function agentQueue(): JsonResponse
+   public function agentQueue(): JsonResponse
     {
         $queue = $this->getQueue();
 
-        $tickets = SupportTicket::whereIn('id', $queue)
+        // Queued (unclaimed) tickets from Redis cache
+        $queuedTickets = SupportTicket::whereIn('id', $queue)
             ->with('user:id,name,email')
             ->get()
             ->sortBy(fn ($t) => array_search($t->id, $queue))
             ->values();
 
-        return response()->json(['success' => true, 'data' => $tickets]);
+        // Active (claimed/open) live chat tickets
+        $activeTickets = SupportTicket::whereNotNull('agent_id')
+            ->whereIn('status', ['open', 'waiting'])
+            ->where('chat_mode', 'live')
+            ->with('user:id,name,email')
+            ->latest()
+            ->get();
+
+        // Merge: queued first, then active
+        $all = $queuedTickets->merge($activeTickets)->unique('id')->values();
+
+        return response()->json(['success' => true, 'data' => $all]);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

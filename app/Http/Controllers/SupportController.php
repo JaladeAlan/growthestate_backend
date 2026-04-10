@@ -323,7 +323,8 @@ class SupportController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $ticket->load('messages'),
+            'data'    => $ticket->load(['messages', 'agent:id,name']), 
+
         ]);
     }
 
