@@ -48,9 +48,8 @@ class WithdrawalController extends Controller
         $user->increment('balance_kobo', $withdrawal->amount_kobo);
         $balanceAfter = $user->fresh()->balance_kobo;
 
-        // Restore daily limit only if the withdrawal was made today
-        $today = now()->toDateString();
-        if ($user->withdrawal_day === $today) {
+        $withdrawalDay = $withdrawal->created_at->toDateString();
+        if ($user->withdrawal_day === $withdrawalDay) {
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
@@ -71,9 +70,12 @@ class WithdrawalController extends Controller
         ]);
 
         $withdrawal->update([
-            'status'          => 'rejected',
+            'status'           => 'rejected',
             'rejection_reason' => $reason,
-            'reviewed_at'     => now(),
+            'reviewed_at'      => now(),
+            // FIX: stamp processed_at so any duplicate webhook / retry is
+            // blocked by the idempotency guard in handlePaystackCallback().
+            'processed_at'     => now(),
         ]);
 
         try {
@@ -448,10 +450,10 @@ class WithdrawalController extends Controller
             return response()->json(['status' => 'not_a_withdrawal']);
         }
 
-        if (in_array($withdrawal->status, ['completed', 'rejected'], true)) {
-            Log::info('Paystack withdrawal webhook: already finalised, skipping', [
-                'reference' => $reference,
-                'status'    => $withdrawal->status,
+        if ($withdrawal->processed_at !== null) {
+            Log::info('Paystack withdrawal webhook: already processed, skipping', [
+                'reference'    => $reference,
+                'processed_at' => $withdrawal->processed_at,
             ]);
             return response()->json(['status' => 'already_processed']);
         }
@@ -459,12 +461,15 @@ class WithdrawalController extends Controller
         DB::transaction(function () use ($withdrawal, $status) {
             $locked = Withdrawal::lockForUpdate()->find($withdrawal->id);
 
-            if (in_array($locked->status, ['completed', 'rejected'], true)) {
+            if ($locked->processed_at !== null) {
                 return;
             }
 
             if ($status === 'success') {
-                $locked->update(['status' => 'completed']);
+                $locked->update([
+                    'status'       => 'completed',
+                    'processed_at' => now(),
+                ]);
 
                 try {
                     $locked->user->notify(new WithdrawalConfirmed($locked));
@@ -481,7 +486,6 @@ class WithdrawalController extends Controller
                 ]);
 
             } elseif ($status === 'failed') {
-                // Paystack confirmed the transfer failed — safe to refund now
                 $this->refundWithdrawal($locked, 'Transfer failed on Paystack.');
 
                 Log::warning('Withdrawal failed via Paystack webhook — refunded', [

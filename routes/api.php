@@ -43,27 +43,18 @@ Route::get('/health', function () {
 Route::get('/up', function () {
     return response()->json(['status' => 'ok'], 200);
 });
-
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
-// Registration: 5 per hour per IP (stops bulk account creation + email spam)
 Route::post('/register', [AuthController::class, 'register'])
     ->middleware('throttle:5,60');
 
-// Login: 10 per 5 minutes per IP (generous enough for real users, blocks brutes)
-// The controller applies a tighter per-email+IP limiter on top of this.
 Route::post('/login', [AuthController::class, 'login'])
     ->middleware('throttle:10,5');
 
-// Email verification: 3 per 15 minutes (ThrottleSensitiveRequests in controller)
 Route::post('/email/verify/code', [AuthController::class, 'verifyEmailCode'])
     ->middleware('throttle:3,15');
 
-// Resend verification: 3 per 15 minutes per email+IP (controller-level)
 Route::post('/email/resend-verification', [AuthController::class, 'resendVerification'])
     ->middleware('throttle:3,15');
 
-// Password reset flow: each step is also rate-limited at controller level
 Route::post('/password/reset/code',   [AuthController::class, 'sendPasswordResetCode'])
     ->middleware('throttle:3,15');
 Route::post('/password/reset/verify', [AuthController::class, 'verifyPasswordResetCode'])
@@ -71,37 +62,29 @@ Route::post('/password/reset/verify', [AuthController::class, 'verifyPasswordRes
 Route::post('/password/reset',        [AuthController::class, 'resetPassword'])
     ->middleware('throttle:3,15');
 
-// ── Public land listing ───────────────────────────────────────────────────────
 Route::get('/land', [LandController::class, 'index']);
 
-// ── Public referral code validation ──────────────────────────────────────────
 Route::post('/referrals/validate', [ReferralController::class, 'validateCode'])
     ->middleware('throttle:20,1');
 
-// ── Public support ────────────────────────────────────────────────────────────
 Route::get('/support/faqs', [SupportController::class, 'faqs']);
 
-// Guest ticket: 5 per 10 minutes per IP (also enforced inside the controller)
 Route::post('/support/tickets/guest', [SupportController::class, 'storeGuestTicket'])
     ->middleware('throttle:5,10');
 
-// ── Public blog ───────────────────────────────────────────────────────────────
 Route::prefix('blog')->group(function () {
-    Route::get('/',              [BlogController::class, 'index']);
-    Route::get('/categories',   [BlogController::class, 'categories']);
-    Route::get('/tags',         [BlogController::class, 'tags']);
-    Route::get('/{slug}',       [BlogController::class, 'show']);
+    Route::get('/',            [BlogController::class, 'index']);
+    Route::get('/categories',  [BlogController::class, 'categories']);
+    Route::get('/tags',        [BlogController::class, 'tags']);
+    Route::get('/{slug}',      [BlogController::class, 'show']);
 });
 
-// ── Waitlist ──────────────────────────────────────────────────────────────────
 Route::post('/waitlist',       [WaitlistController::class, 'store'])->middleware('throttle:5,10');
 Route::post('/waitlist/check', [WaitlistController::class, 'check'])->middleware('throttle:10,1');
 
-// ── Certificate public verification ──────────────────────────────────────────
 Route::get('/verify/{certNumber}', [CertificateController::class, 'verify'])
     ->middleware('throttle:30,1');
 
-// ── Payment webhooks (signature-verified internally, not JWT-authenticated) ───
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
 Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']);
@@ -112,38 +95,33 @@ Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']);
 
 Route::middleware(['jwt.auth'])->group(function () {
 
-    // ── Auth ──────────────────────────────────────────────────────────────────
     Route::post('/logout',  [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:10,1');
 
     Route::post('/user/change-password', [AuthController::class, 'changePassword'])
         ->middleware('throttle:5,15');
 
-    // ── Requires verified email ───────────────────────────────────────────────
     Route::middleware(['verified'])->group(function () {
 
         // ── Profile ───────────────────────────────────────────────────────────
-        Route::get('/me',                    [ProfileController::class, 'me']);
-        Route::get('/user/account-status',   [ProfileController::class, 'accountStatus']);
-        Route::get('/user/stats',            [ProfileController::class, 'stats']);
-        Route::get('/user/lands',            [ProfileController::class, 'lands']);
-        Route::put('/user/bank-details',     [ProfileController::class, 'updateBankDetails']);
+        Route::get('/me',                  [ProfileController::class, 'me']);
+        Route::get('/user/account-status', [ProfileController::class, 'accountStatus']);
+        Route::get('/user/stats',          [ProfileController::class, 'stats']);
+        Route::get('/user/lands',          [ProfileController::class, 'lands']);
+        Route::put('/user/bank-details',   [ProfileController::class, 'updateBankDetails']);
 
         // ── Transaction PIN ───────────────────────────────────────────────────
         Route::post('/pin/set',    [PinController::class, 'set']);
         Route::post('/pin/update', [PinController::class, 'update']);
 
-        Route::post('/pin/forgot',       [PinController::class, 'forgot'])
-            ->middleware('throttle:5,15');
-        Route::post('/pin/verify-code',  [PinController::class, 'verifyCode'])
-            ->middleware('throttle:5,15');
-        Route::post('/pin/reset',        [PinController::class, 'reset'])
-            ->middleware('throttle:5,15');
+        Route::post('/pin/forgot',      [PinController::class, 'forgot'])->middleware('throttle:5,15');
+        Route::post('/pin/verify-code', [PinController::class, 'verifyCode'])->middleware('throttle:5,15');
+        Route::post('/pin/reset',       [PinController::class, 'reset'])->middleware('throttle:5,15');
 
-        // ── Lands (authenticated) ─────────────────────────────────────────────
-        Route::get('/lands',          [LandController::class, 'indexAuth']);
-        Route::get('/lands/map',      [LandController::class, 'mapIndex']);
-        Route::get('/lands/{land}',   [LandController::class, 'show']);
+        // ── Lands ─────────────────────────────────────────────────────────────
+        Route::get('/lands',              [LandController::class, 'indexAuth']);
+        Route::get('/lands/map',          [LandController::class, 'mapIndex']);
+        Route::get('/lands/{land}',       [LandController::class, 'show']);
         Route::get('/lands/{land}/units', [LandController::class, 'units']);
 
         // ── Deposits ──────────────────────────────────────────────────────────
@@ -155,81 +133,79 @@ Route::middleware(['jwt.auth'])->group(function () {
             ->middleware('throttle:20,1');
 
         // ── Withdrawals ───────────────────────────────────────────────────────
-        Route::post('/withdraw',                    [WithdrawalController::class, 'requestWithdrawal'])
+        Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
             ->middleware('throttle:5,60');
-        Route::get('/withdrawals/{reference}',      [WithdrawalController::class, 'getWithdrawalStatus']);
+        Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // ── Transactions ──────────────────────────────────────────────────────
-        Route::get('/transactions/user',            [TransactionController::class, 'userTransactions']);
-        Route::post('/lands/{land}/purchase',       [TransactionController::class, 'purchase']);
-        Route::post('/lands/{land}/sell',           [TransactionController::class, 'sell']);
+        Route::get('/transactions/user',      [TransactionController::class, 'userTransactions']);
+        Route::post('/lands/{land}/purchase', [TransactionController::class, 'purchase']);
+        Route::post('/lands/{land}/sell',     [TransactionController::class, 'sell']);
 
         // ── Portfolio ─────────────────────────────────────────────────────────
-        Route::get('/portfolio/summary',            [PortfolioController::class, 'summary']);
-        Route::get('/portfolio/chart',              [PortfolioController::class, 'chart']);
-        Route::get('/portfolio/performance',        [PortfolioController::class, 'performance']);
-        Route::get('/portfolio/allocation',         [PortfolioController::class, 'allocation']);
-        Route::get('/portfolio/asset/{land}',       [PortfolioController::class, 'asset']);
+        Route::get('/portfolio/summary',     [PortfolioController::class, 'summary']);
+        Route::get('/portfolio/chart',       [PortfolioController::class, 'chart']);
+        Route::get('/portfolio/performance', [PortfolioController::class, 'performance']);
+        Route::get('/portfolio/allocation',  [PortfolioController::class, 'allocation']);
+        Route::get('/portfolio/asset/{land}',[PortfolioController::class, 'asset']);
 
         // ── KYC ───────────────────────────────────────────────────────────────
-        Route::get('/kyc/status',                   [KycController::class, 'status']);
-        Route::post('/kyc/submit',                  [KycController::class, 'submit'])
-            ->middleware('throttle:3,60'); // 3 submissions per hour
-        Route::get('/kyc/{id}/image/{type}',        [KycImageController::class, 'show']);
+        Route::get('/kyc/status',          [KycController::class, 'status']);
+        Route::post('/kyc/submit',         [KycController::class, 'submit'])->middleware('throttle:3,60');
+        Route::get('/kyc/{id}/image/{type}',[KycImageController::class, 'show']);
 
         // ── Referrals ─────────────────────────────────────────────────────────
-        Route::get('/referrals/dashboard',              [ReferralController::class, 'dashboard']);
-        Route::get('/referrals/rewards',                [ReferralController::class, 'availableRewards']);
-        Route::post('/referrals/rewards/{id}/claim',    [ReferralController::class, 'claimReward'])
+        Route::get('/referrals/dashboard',           [ReferralController::class, 'dashboard']);
+        Route::get('/referrals/rewards',             [ReferralController::class, 'availableRewards']);
+        Route::post('/referrals/rewards/{id}/claim', [ReferralController::class, 'claimReward'])
             ->middleware('throttle:10,1');
 
         // ── Notifications ─────────────────────────────────────────────────────
-        Route::get('/notifications',                [NotificationController::class, 'index']);
-        Route::get('/notifications/unread',         [NotificationController::class, 'unread']);
-        Route::post('/notifications/read',          [NotificationController::class, 'markAllRead']);
-        Route::post('/notifications/{id}/read',     [NotificationController::class, 'markRead']);
+        Route::get('/notifications',             [NotificationController::class, 'index']);
+        Route::get('/notifications/unread',      [NotificationController::class, 'unread']);
+        Route::post('/notifications/read',       [NotificationController::class, 'markAllRead']);
+        Route::post('/notifications/{id}/read',  [NotificationController::class, 'markRead']);
 
         // ── Support ───────────────────────────────────────────────────────────
-        // AI chat: 20 per 10 min per user (also enforced in controller)
-        Route::post('/support/chat',                            [SupportController::class, 'chat'])
+        Route::post('/support/chat', [SupportController::class, 'chat'])
             ->middleware('throttle:20,10');
-        Route::get('/support/tickets',                          [SupportController::class, 'indexTickets']);
-        Route::post('/support/tickets',                         [SupportController::class, 'storeTicket'])
+        Route::get('/support/tickets',                        [SupportController::class, 'indexTickets']);
+        Route::post('/support/tickets',                       [SupportController::class, 'storeTicket'])
             ->middleware('throttle:5,60');
-        Route::get('/support/tickets/{ticket}',                 [SupportController::class, 'showTicket']);
-        Route::post('/support/tickets/{ticket}/reply',          [SupportController::class, 'replyTicket'])
+        Route::get('/support/tickets/{ticket}',               [SupportController::class, 'showTicket']);
+        Route::post('/support/tickets/{ticket}/reply',        [SupportController::class, 'replyTicket'])
             ->middleware('throttle:20,10');
-        Route::patch('/support/tickets/{ticket}/close',         [SupportController::class, 'closeTicket']);
+        Route::patch('/support/tickets/{ticket}/close',       [SupportController::class, 'closeTicket']);
 
         Route::prefix('support/live-chat')->group(function () {
-            Route::post('/request',                     [LiveChatController::class, 'request']);
-            Route::post('/{ticket}/message',            [LiveChatController::class, 'sendMessage']);
-            Route::post('/{ticket}/typing',             [LiveChatController::class, 'typing']);
+            Route::post('/request',              [LiveChatController::class, 'request']);
+            Route::post('/{ticket}/message',     [LiveChatController::class, 'sendMessage']);
+            Route::post('/{ticket}/typing',      [LiveChatController::class, 'typing']);
         });
 
         // ── Marketplace ───────────────────────────────────────────────────────
-        Route::get('/marketplace',                                          [MarketplaceController::class, 'index']);
-        Route::get('/marketplace/my-listings',                              [MarketplaceController::class, 'myListings']);
-        Route::get('/marketplace/my-offers',                                [MarketplaceController::class, 'myOffers']);
-        Route::get('/marketplace/my-transactions',                          [MarketplaceController::class, 'myTransactions']);
-        Route::get('/marketplace/{listing}',                                [MarketplaceController::class, 'show']);
-        Route::post('/marketplace',                                         [MarketplaceController::class, 'store'])
+        Route::get('/marketplace',               [MarketplaceController::class, 'index']);
+        Route::get('/marketplace/my-listings',   [MarketplaceController::class, 'myListings']);
+        Route::get('/marketplace/my-offers',     [MarketplaceController::class, 'myOffers']);
+        Route::get('/marketplace/my-transactions',[MarketplaceController::class, 'myTransactions']);
+        Route::get('/marketplace/{listing}',     [MarketplaceController::class, 'show']);
+        Route::post('/marketplace',              [MarketplaceController::class, 'store'])
             ->middleware('throttle:10,60');
-        Route::patch('/marketplace/{listing}',                              [MarketplaceController::class, 'update']);
-        Route::delete('/marketplace/{listing}',                             [MarketplaceController::class, 'destroy']);
-        Route::post('/marketplace/{listing}/offers',                        [MarketplaceController::class, 'makeOffer'])
+        Route::patch('/marketplace/{listing}',   [MarketplaceController::class, 'update']);
+        Route::delete('/marketplace/{listing}',  [MarketplaceController::class, 'destroy']);
+        Route::post('/marketplace/{listing}/offers', [MarketplaceController::class, 'makeOffer'])
             ->middleware('throttle:10,60');
-        Route::patch('/marketplace/{listing}/offers/{offer}/accept',        [MarketplaceController::class, 'acceptOffer']);
-        Route::patch('/marketplace/{listing}/offers/{offer}/reject',        [MarketplaceController::class, 'rejectOffer']);
-        Route::patch('/marketplace/{listing}/offers/{offer}/withdraw',      [MarketplaceController::class, 'withdrawOffer']);
-        Route::get('/marketplace/{listing}/messages',                       [MarketplaceController::class, 'messages']);
-        Route::post('/marketplace/{listing}/messages',                      [MarketplaceController::class, 'sendMessage'])
+        Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer']);
+        Route::patch('/marketplace/{listing}/offers/{offer}/reject',   [MarketplaceController::class, 'rejectOffer']);
+        Route::patch('/marketplace/{listing}/offers/{offer}/withdraw', [MarketplaceController::class, 'withdrawOffer']);
+        Route::get('/marketplace/{listing}/messages',  [MarketplaceController::class, 'messages']);
+        Route::post('/marketplace/{listing}/messages', [MarketplaceController::class, 'sendMessage'])
             ->middleware('throttle:30,1');
 
         // ── Certificates ──────────────────────────────────────────────────────
-        Route::get('/certificates',                         [CertificateController::class, 'index']);
-        Route::get('/certificates/{certNumber}',            [CertificateController::class, 'show']);
-        Route::get('/certificates/{certNumber}/download',   [CertificateController::class, 'download'])
+        Route::get('/certificates',                       [CertificateController::class, 'index']);
+        Route::get('/certificates/{certNumber}',          [CertificateController::class, 'show']);
+        Route::get('/certificates/{certNumber}/download', [CertificateController::class, 'download'])
             ->middleware('throttle:10,1');
     });
 });
@@ -238,111 +214,99 @@ Route::middleware(['jwt.auth'])->group(function () {
 // ADMIN — requires JWT + admin flag
 // =============================================================================
 
-Route::middleware(['jwt.auth', 'admin'])->prefix('admin')->group(function () {
+Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
-    Route::get('/users',                        [AdminUserController::class, 'index']);
-    Route::get('/users/{user}',                 [AdminUserController::class, 'show']);
-    Route::patch('/users/{user}/suspend',       [AdminUserController::class, 'suspend']);
-    Route::patch('/users/{user}/unsuspend',     [AdminUserController::class, 'unsuspend']);
-    Route::patch('/users/{user}/make-admin',    [AdminUserController::class, 'makeAdmin']);
-    Route::patch('/users/{user}/remove-admin',  [AdminUserController::class, 'removeAdmin']);
-    Route::delete('/users/{user}',              [AdminUserController::class, 'destroy']);
+    Route::get('/users',                       [AdminUserController::class, 'index']);
+    Route::get('/users/{user}',                [AdminUserController::class, 'show']);
+    Route::patch('/users/{user}/suspend',      [AdminUserController::class, 'suspend']);
+    Route::patch('/users/{user}/unsuspend',    [AdminUserController::class, 'unsuspend']);
+    Route::patch('/users/{user}/make-admin',   [AdminUserController::class, 'makeAdmin']);
+    Route::patch('/users/{user}/remove-admin', [AdminUserController::class, 'removeAdmin']);
+    Route::delete('/users/{user}',             [AdminUserController::class, 'destroy']);
 
     // ── Lands ─────────────────────────────────────────────────────────────────
-    Route::get('/lands',                        [LandController::class, 'adminIndex']);
-    Route::post('/lands',                       [LandController::class, 'store']);
-    Route::post('/lands/{land}',                [LandController::class, 'update']);
-    Route::patch('/lands/{land}/price',         [LandController::class, 'updatePrice']);
-    Route::patch('/lands/{land}/availability',  [LandController::class, 'toggleAvailability']);
+    Route::get('/lands',                       [LandController::class, 'adminIndex']);
+    Route::post('/lands',                      [LandController::class, 'store']);
+    Route::post('/lands/{land}',               [LandController::class, 'update']);
+    Route::patch('/lands/{land}/price',        [LandController::class, 'updatePrice']);
+    Route::patch('/lands/{land}/availability', [LandController::class, 'toggleAvailability']);
 
-    // Land valuations
-    Route::get('/lands/{land}/valuation',                       [LandController::class, 'getValuations']);
-    Route::post('/lands/{land}/valuation',                      [LandController::class, 'addValuationEntry']);
-    Route::patch('/lands/{land}/valuation/{year}/{month}',      [LandController::class, 'updateValuationEntry']);
-    Route::delete('/lands/{land}/valuation/{year}/{month}',     [LandController::class, 'deleteValuationEntry']);
+    Route::get('/lands/{land}/valuation',                   [LandController::class, 'getValuations']);
+    Route::post('/lands/{land}/valuation',                  [LandController::class, 'addValuationEntry']);
+    Route::patch('/lands/{land}/valuation/{year}/{month}',  [LandController::class, 'updateValuationEntry']);
+    Route::delete('/lands/{land}/valuation/{year}/{month}', [LandController::class, 'deleteValuationEntry']);
 
     // ── KYC ───────────────────────────────────────────────────────────────────
-    Route::get('/kyc',                          [KycController::class, 'adminIndex']);
-    Route::get('/kyc/{id}',                     [KycController::class, 'adminShow']);
-    Route::post('/kyc/{id}/approve',            [KycController::class, 'adminApprove']);
-    Route::post('/kyc/{id}/reject',             [KycController::class, 'adminReject']);
-    Route::post('/kyc/{id}/resubmit',           [KycController::class, 'adminRequestResubmit']);
+    Route::get('/kyc',                   [KycController::class, 'adminIndex']);
+    Route::get('/kyc/{id}',              [KycController::class, 'adminShow']);
+    Route::post('/kyc/{id}/approve',     [KycController::class, 'adminApprove'])->middleware('throttle:30,1');
+    Route::post('/kyc/{id}/reject',      [KycController::class, 'adminReject'])->middleware('throttle:30,1');
+    Route::post('/kyc/{id}/resubmit',    [KycController::class, 'adminRequestResubmit'])->middleware('throttle:30,1');
 
-    // ── Support tickets ───────────────────────────────────────────────────────
-    Route::get('/support/tickets',                              [AdminSupportController::class, 'index']);
-    Route::get('/support/tickets/{ticket}',                     [AdminSupportController::class, 'show']);
-    Route::post('/support/tickets/{ticket}/reply',              [AdminSupportController::class, 'reply']);
-    Route::patch('/support/tickets/{ticket}/status',            [AdminSupportController::class, 'updateStatus']);
-    Route::delete('/support/tickets/{ticket}',                  [AdminSupportController::class, 'destroy']);
-    Route::get('/support/stats',                                [SupportController::class, 'adminStats']);
+    // ── Support ───────────────────────────────────────────────────────────────
+    Route::get('/support/tickets',                      [AdminSupportController::class, 'index']);
+    Route::get('/support/tickets/{ticket}',             [AdminSupportController::class, 'show']);
+    Route::post('/support/tickets/{ticket}/reply',      [AdminSupportController::class, 'reply']);
+    Route::patch('/support/tickets/{ticket}/status',    [AdminSupportController::class, 'updateStatus']);
+    Route::delete('/support/tickets/{ticket}',          [AdminSupportController::class, 'destroy']);
+    Route::get('/support/stats',                        [SupportController::class, 'adminStats']);
 
     // ── Live chat (agent) ─────────────────────────────────────────────────────
     Route::prefix('live-chat')->group(function () {
-        Route::get('/queue',               [LiveChatController::class, 'agentQueue']);
-        Route::post('/{ticket}/claim',     [LiveChatController::class, 'agentClaim']);
-        Route::post('/{ticket}/message',   [LiveChatController::class, 'agentMessage']);
-        Route::post('/{ticket}/typing',    [LiveChatController::class, 'agentTyping']);
-        Route::post('/{ticket}/end',       [LiveChatController::class, 'agentEnd']);
+        Route::get('/queue',             [LiveChatController::class, 'agentQueue']);
+        Route::post('/{ticket}/claim',   [LiveChatController::class, 'agentClaim']);
+        Route::post('/{ticket}/message', [LiveChatController::class, 'agentMessage']);
+        Route::post('/{ticket}/typing',  [LiveChatController::class, 'agentTyping']);
+        Route::post('/{ticket}/end',     [LiveChatController::class, 'agentEnd']);
     });
 
-   Route::prefix('blog')->group(function () {
+    // ── Blog ──────────────────────────────────────────────────────────────────
+    Route::prefix('blog')->group(function () {
+        Route::get('/categories', [BlogController::class, 'adminCategories']);
+        Route::get('/tags',       [BlogController::class, 'adminTags']);
 
-    Route::get('/categories', [BlogController::class, 'adminCategories']);
-    Route::get('/tags', [BlogController::class, 'adminTags']);
-
-    // ── Categories ──
-    Route::prefix('categories')->group(function () {
-        Route::post('/', [BlogController::class, 'storeCategory']);
-        Route::patch('/{blogCategory}', [BlogController::class, 'updateCategory']);
-        Route::delete('/{blogCategory}', [BlogController::class, 'destroyCategory']);
-    });
-
-    // ── Tags ──
-    Route::prefix('tags')->group(function () {
-        Route::post('/', [BlogController::class, 'storeTag']);
-        Route::delete('/{blogTag}', [BlogController::class, 'destroyTag']);
-    });
-
-    // ── Posts ──
-    Route::get('/', [BlogController::class, 'adminIndex']);
-    Route::post('/', [BlogController::class, 'store']);
-
-    Route::prefix('post')->group(function () {
-        Route::get('/{blogPost}', [BlogController::class, 'adminShow'])->whereNumber('blogPost');
-        Route::post('/{blogPost}', [BlogController::class, 'update'])->whereNumber('blogPost');
-        Route::delete('/{blogPost}', [BlogController::class, 'destroy'])->whereNumber('blogPost');
+        Route::prefix('categories')->group(function () {
+            Route::post('/',                   [BlogController::class, 'storeCategory']);
+            Route::patch('/{blogCategory}',    [BlogController::class, 'updateCategory']);
+            Route::delete('/{blogCategory}',   [BlogController::class, 'destroyCategory']);
         });
+
+        Route::prefix('tags')->group(function () {
+            Route::post('/',          [BlogController::class, 'storeTag']);
+            Route::delete('/{blogTag}',[BlogController::class, 'destroyTag']);
+        });
+
+        // FIX: static routes before parameterised — GET '/' and POST '/' first
+        Route::get('/',  [BlogController::class, 'adminIndex']);
+        Route::post('/', [BlogController::class, 'store']);
+
+        Route::get('/{blogPost}',    [BlogController::class, 'adminShow'])->whereNumber('blogPost');
+        Route::put('/{blogPost}',    [BlogController::class, 'update'])->whereNumber('blogPost');   
+        Route::delete('/{blogPost}', [BlogController::class, 'destroy'])->whereNumber('blogPost');
     });
 
     // ── Withdrawals ───────────────────────────────────────────────────────────
-   Route::prefix('withdrawals')->group(function () {
- 
-    // List withdrawals — filter by status, e.g. ?status=pending
-    Route::get('/', [WithdrawalController::class, 'adminIndex']);
- 
-    // Approve a single withdrawal → triggers Paystack transfer
-    Route::post('/{id}/approve', [WithdrawalController::class, 'adminApprove']);
- 
-    // Reject a single withdrawal → refunds user balance
-    Route::post('/{id}/reject', [WithdrawalController::class, 'adminReject']);
- 
-    // Approve all pending withdrawals in one action
-    Route::post('/approve-all', [WithdrawalController::class, 'adminApproveAll']);
-   });
+    Route::prefix('withdrawals')->group(function () {
+        Route::get('/', [WithdrawalController::class, 'adminIndex']);
+
+        Route::post('/approve-all',    [WithdrawalController::class, 'adminApproveAll'])->middleware('throttle:5,1');
+        Route::post('/{id}/approve',   [WithdrawalController::class, 'adminApprove'])->middleware('throttle:30,1');
+        Route::post('/{id}/reject',    [WithdrawalController::class, 'adminReject'])->middleware('throttle:30,1');
+    });
 
     // ── Referrals ─────────────────────────────────────────────────────────────
-    Route::get('/referrals',        [ReferralController::class, 'adminIndex']);
-    Route::get('/referrals/stats',  [ReferralController::class, 'adminStats']);
+    Route::get('/referrals',       [ReferralController::class, 'adminIndex']);
+    Route::get('/referrals/stats', [ReferralController::class, 'adminStats']);
 
     // ── Certificates ──────────────────────────────────────────────────────────
-    Route::get('/certificates',                         [CertificateController::class, 'adminIndex']);
-    Route::patch('/certificates/{certificate}/revoke',  [CertificateController::class, 'revoke']);
-    Route::post('/certificates/{certificate}/regenerate', [CertificateController::class, 'regenerate']);
+    Route::get('/certificates',                          [CertificateController::class, 'adminIndex']);
+    Route::patch('/certificates/{certificate}/revoke',   [CertificateController::class, 'revoke']);
+    Route::post('/certificates/{certificate}/regenerate',[CertificateController::class, 'regenerate']);
 
     // ── Waitlist ──────────────────────────────────────────────────────────────
-    Route::get('/waitlist',                 [WaitlistController::class, 'index']);
-    Route::get('/waitlist/stats',           [WaitlistController::class, 'stats']);
+    Route::get('/waitlist',                    [WaitlistController::class, 'index']);
+    Route::get('/waitlist/stats',              [WaitlistController::class, 'stats']);
     Route::post('/waitlist/{waitlist}/invite', [WaitlistController::class, 'invite']);
-    Route::delete('/waitlist/{waitlist}',   [WaitlistController::class, 'destroy']);
+    Route::delete('/waitlist/{waitlist}',      [WaitlistController::class, 'destroy']);
 });

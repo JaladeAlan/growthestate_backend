@@ -28,7 +28,6 @@ class MarketplaceController extends Controller
 
     /**
      * GET /marketplace
-     * Public browseable list of active listings.
      */
     public function index(Request $request)
     {
@@ -48,7 +47,7 @@ class MarketplaceController extends Controller
                 'land.latestPrice',
             ]);
 
-        if ($request->land_id)  $q->where('land_id', $request->land_id);
+        if ($request->land_id)   $q->where('land_id', $request->land_id);
         if ($request->min_price) $q->where('asking_price_kobo', '>=', $request->min_price);
         if ($request->max_price) $q->where('asking_price_kobo', '<=', $request->max_price);
 
@@ -97,29 +96,33 @@ class MarketplaceController extends Controller
             'expires_at'        => 'nullable|date|after:now',
         ]);
 
-        // Verify seller owns enough unlisted units
-        $owned = (int) $user->lands()
-            ->wherePivot('land_id', $data['land_id'])
-            ->sum('user_land.units');
+        $listing = DB::transaction(function () use ($user, $data) {
+            $holding = UserLand::where('user_id', $user->id)
+                ->where('land_id', $data['land_id'])
+                ->lockForUpdate()
+                ->first();
 
-        $alreadyListed = MarketplaceListing::where('seller_id', $user->id)
-            ->where('land_id', $data['land_id'])
-            ->where('status', 'active')
-            ->sum('units_for_sale');
+            $owned = $holding ? (int) $holding->units : 0;
 
-        $available = $owned - $alreadyListed;
+            $alreadyListed = MarketplaceListing::where('seller_id', $user->id)
+                ->where('land_id', $data['land_id'])
+                ->where('status', 'active')
+                ->sum('units_for_sale');
 
-        if ($data['units_for_sale'] > $available) {
-            throw ValidationException::withMessages([
-                'units_for_sale' => "You only have {$available} unlisted units available for this property.",
+            $available = $owned - $alreadyListed;
+
+            if ($data['units_for_sale'] > $available) {
+                throw ValidationException::withMessages([
+                    'units_for_sale' => "You only have {$available} unlisted units available for this property.",
+                ]);
+            }
+
+            return MarketplaceListing::create([
+                ...$data,
+                'seller_id' => $user->id,
+                'status'    => 'active',
             ]);
-        }
-
-        $listing = MarketplaceListing::create([
-            ...$data,
-            'seller_id' => $user->id,
-            'status'    => 'active',
-        ]);
+        });
 
         return response()->json([
             'success' => true,
@@ -130,7 +133,6 @@ class MarketplaceController extends Controller
 
     /**
      * PATCH /marketplace/{listing}
-     * Seller edits price / description / expiry on an active listing.
      */
     public function update(Request $request, MarketplaceListing $listing)
     {
@@ -153,7 +155,6 @@ class MarketplaceController extends Controller
 
     /**
      * DELETE /marketplace/{listing}
-     * Seller cancels an active listing — rejects all pending offers.
      */
     public function destroy(Request $request, MarketplaceListing $listing)
     {
@@ -177,7 +178,6 @@ class MarketplaceController extends Controller
 
     /**
      * POST /marketplace/{listing}/offers
-     * Buyer makes an offer.
      */
     public function makeOffer(Request $request, MarketplaceListing $listing)
     {
@@ -191,7 +191,6 @@ class MarketplaceController extends Controller
             abort(422, 'This listing is no longer active.');
         }
 
-        // One pending offer per buyer per listing
         if (MarketplaceOffer::where('listing_id', $listing->id)
             ->where('buyer_id', $buyer->id)
             ->where('status', 'pending')
@@ -222,10 +221,6 @@ class MarketplaceController extends Controller
 
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/accept
-     *
-     * Seller accepts an offer.
-     * Buyer's wallet is debited and units transfer atomically — no escrow holding period.
-     * If anything fails the entire DB transaction rolls back.
      */
     public function acceptOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
     {
@@ -252,7 +247,22 @@ class MarketplaceController extends Controller
 
         return DB::transaction(function () use ($listing, $offer, $seller) {
 
-            $buyer      = $offer->buyer()->lockForUpdate()->first();
+            $buyerId  = $offer->buyer_id;
+            $sellerId = $seller->id;
+
+            [$firstId, $secondId] = $buyerId < $sellerId
+                ? [$buyerId, $sellerId]
+                : [$sellerId, $buyerId];
+
+            $lockedUsers = \App\Models\User::whereIn('id', [$firstId, $secondId])
+                ->lockForUpdate()
+                ->orderBy('id')
+                ->get()
+                ->keyBy('id');
+
+            $buyer  = $lockedUsers[$buyerId];
+            $seller = $lockedUsers[$sellerId];
+
             $totalKobo  = $offer->offer_price_kobo * $offer->units;
             $feeKobo    = (int) round($totalKobo * self::FEE_PCT / 100);
             $sellerGets = $totalKobo - $feeKobo;
@@ -266,9 +276,10 @@ class MarketplaceController extends Controller
             }
 
             // ── 2. Check seller still owns enough units ───────────────────
-            $sellerUnits = (int) $seller->lands()
-                ->wherePivot('land_id', $listing->land_id)
-                ->sum('user_land.units');
+            $sellerUnits = (int) UserLand::where('user_id', $seller->id)
+                ->where('land_id', $listing->land_id)
+                ->lockForUpdate()
+                ->value('units');
 
             if ($sellerUnits < $offer->units) {
                 throw ValidationException::withMessages([
@@ -277,33 +288,33 @@ class MarketplaceController extends Controller
             }
 
             // ── 3. Debit buyer wallet ─────────────────────────────────────
-            $buyer->decrement('balance_kobo', $totalKobo);
+            $buyer->balance_kobo -= $totalKobo;
+            $buyer->save();
 
             LedgerEntry::create([
                 'uid'           => $buyer->id,
                 'type'          => 'marketplace_purchase',
                 'amount_kobo'   => $totalKobo,
-                'balance_after' => $buyer->fresh()->balance_kobo,
+                'balance_after' => $buyer->balance_kobo,
                 'reference'     => $reference,
             ]);
 
             // ── 4. Credit seller wallet (minus fee) ───────────────────────
-            $seller->increment('balance_kobo', $sellerGets);
+            $seller->balance_kobo += $sellerGets;
+            $seller->save();
 
             LedgerEntry::create([
                 'uid'           => $seller->id,
                 'type'          => 'marketplace_sale',
                 'amount_kobo'   => $sellerGets,
-                'balance_after' => $seller->fresh()->balance_kobo,
+                'balance_after' => $seller->balance_kobo,
                 'reference'     => $reference,
             ]);
 
             // ── 5. Transfer units: decrement seller ───────────────────────
-            DB::statement("
-                UPDATE user_land
-                SET units = units - ?, updated_at = NOW()
-                WHERE user_id = ? AND land_id = ?
-            ", [$offer->units, $seller->id, $listing->land_id]);
+            UserLand::where('user_id', $seller->id)
+                ->where('land_id', $listing->land_id)
+                ->decrement('units', $offer->units);
 
             // Remove row if seller now holds zero units
             UserLand::where('user_id', $seller->id)
@@ -320,10 +331,18 @@ class MarketplaceController extends Controller
             ", [$buyer->id, $listing->land_id, $offer->units]);
 
             // ── 7. Update Purchase records ────────────────────────────────
-            // Reduce seller's purchase record
-            Purchase::where('user_id', $seller->id)
+            $sellerPurchase = Purchase::where('user_id', $seller->id)
                 ->where('land_id', $listing->land_id)
-                ->decrement('units', $offer->units);
+                ->lockForUpdate()
+                ->first();
+
+            if (! $sellerPurchase || $sellerPurchase->units < $offer->units) {
+                throw ValidationException::withMessages([
+                    'units' => 'Purchase record inconsistency detected. Please contact support.',
+                ]);
+            }
+
+            $sellerPurchase->decrement('units', $offer->units);
 
             // Upsert buyer's purchase record
             DB::statement("
@@ -383,7 +402,6 @@ class MarketplaceController extends Controller
 
             $offer->update(['status' => 'accepted']);
 
-            // Mark listing sold or partially sold if only some units were bought
             $remainingUnits = $listing->units_for_sale - $offer->units;
             $listing->update([
                 'status'         => $remainingUnits > 0 ? 'active' : 'sold',
@@ -391,7 +409,7 @@ class MarketplaceController extends Controller
             ]);
 
             // ── 10. Log the marketplace transaction ───────────────────────
-            $mktTx = MarketplaceTransaction::create([
+            MarketplaceTransaction::create([
                 'listing_id'           => $listing->id,
                 'offer_id'             => $offer->id,
                 'buyer_id'             => $buyer->id,
@@ -479,7 +497,6 @@ class MarketplaceController extends Controller
             ->orderBy('created_at')
             ->get();
 
-        // Mark incoming messages as read
         MarketplaceMessage::where('listing_id', $listing->id)
             ->where('receiver_id', $user->id)
             ->where('sender_id', $otherId)
@@ -522,9 +539,6 @@ class MarketplaceController extends Controller
     // MY ACTIVITY
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * GET /marketplace/my-listings
-     */
     public function myListings(Request $request)
     {
         $listings = MarketplaceListing::where('seller_id', $request->user()->id)
@@ -535,9 +549,6 @@ class MarketplaceController extends Controller
         return response()->json(['success' => true, 'data' => $listings]);
     }
 
-    /**
-     * GET /marketplace/my-offers
-     */
     public function myOffers(Request $request)
     {
         $offers = MarketplaceOffer::where('buyer_id', $request->user()->id)
@@ -548,10 +559,6 @@ class MarketplaceController extends Controller
         return response()->json(['success' => true, 'data' => $offers]);
     }
 
-    /**
-     * GET /marketplace/my-transactions
-     * Completed trades where the user was buyer or seller.
-     */
     public function myTransactions(Request $request)
     {
         $userId = $request->user()->id;

@@ -17,20 +17,14 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Illuminate\Support\Facades\RateLimiter;
 
 class UserController extends Controller
 {
     public function getUserUnitsForLand(Request $request, $landId)
     {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'User not authenticated'], 401);
-        }
-
         $userLand = DB::table('user_land')
-            ->where('user_id', $user->id)
+            ->where('user_id', $request->user()->id)
             ->where('land_id', $landId)
             ->first();
 
@@ -42,11 +36,7 @@ class UserController extends Controller
 
     public function getAllUserLands(Request $request)
     {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'User not authenticated'], 401);
-        }
+        $user = $request->user();
 
         $userLands = $user->userLands()
             ->with('land')
@@ -79,7 +69,7 @@ class UserController extends Controller
 
     public function setTransactionPin(Request $request)
     {
-        $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
         $request->validate([
             'pin'              => 'required|digits:4',
@@ -98,11 +88,11 @@ class UserController extends Controller
 
     public function updateTransactionPin(Request $request)
     {
-        $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
         $request->validate([
-            'old_pin'             => 'required|digits:4',
-            'new_pin'             => 'required|digits:4',
+            'old_pin'              => 'required|digits:4',
+            'new_pin'              => 'required|digits:4',
             'new_pin_confirmation' => 'required|same:new_pin',
         ]);
 
@@ -120,6 +110,17 @@ class UserController extends Controller
     {
         $request->validate(['email' => 'required|email']);
 
+        $key = 'pin-reset-send:' . sha1(strtolower(trim($request->email)) . '|' . $request->ip());
+
+        if (RateLimiter::tooManyAttempts($key, 3)) {
+            return response()->json([
+                'message'     => 'Too many attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
+        }
+
+        RateLimiter::hit($key, 900); // 15-minute decay
+
         $user = User::where('email', $request->email)->first();
 
         if ($user) {
@@ -127,20 +128,33 @@ class UserController extends Controller
             $user->pin_reset_code       = Hash::make((string) $code);
             $user->pin_reset_expires_at = now()->addMinutes(10);
             $user->save();
-            Mail::to($user->email)->queue(new TransactionPinResetMail($user, $code));
+
+            try {
+                Mail::to($user->email)->queue(new TransactionPinResetMail($user, $code));
+            } catch (\Exception $e) {
+                Log::error('Failed to queue PIN reset email', [
+                    'user_id' => $user->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
         }
 
-        // Always return same response to prevent enumeration
+        // Always return the same response to prevent enumeration
         return response()->json(['message' => 'If that email is registered, a PIN reset code has been sent.']);
     }
 
-    /**
-     * Verify PIN reset code.
-     *
-     */
     public function verifyPinResetCode(Request $request)
     {
         $request->validate(['email' => 'required|email', 'code' => 'required|numeric']);
+
+        $key = 'pin-reset-verify:' . sha1(strtolower(trim($request->email)) . '|' . $request->ip());
+
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'message'     => 'Too many attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
+        }
 
         $user = User::where('email', $request->email)->first();
 
@@ -151,9 +165,11 @@ class UserController extends Controller
             now()->greaterThan($user->pin_reset_expires_at) ||
             ! Hash::check((string) $request->code, $user->pin_reset_code)
         ) {
+            RateLimiter::hit($key, 900);
             return response()->json(['error' => 'Invalid or expired code.'], 400);
         }
 
+        RateLimiter::clear($key);
         return response()->json(['message' => 'Code verified.']);
     }
 
@@ -164,13 +180,22 @@ class UserController extends Controller
     public function resetTransactionPin(Request $request)
     {
         $request->validate([
-            'email'               => 'required|email',
-            'code'                => 'required|numeric',
-            'new_pin'             => 'required|digits:4',
+            'email'                => 'required|email',
+            'code'                 => 'required|numeric',
+            'new_pin'              => 'required|digits:4',
             'new_pin_confirmation' => 'required|same:new_pin',
         ]);
 
-        DB::transaction(function () use ($request) {
+        $key = 'pin-reset-confirm:' . sha1(strtolower(trim($request->email)) . '|' . $request->ip());
+
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            return response()->json([
+                'message'     => 'Too many attempts. Please try again later.',
+                'retry_after' => RateLimiter::availableIn($key),
+            ], 429);
+        }
+
+        DB::transaction(function () use ($request, $key) {
             // Lock the user row so concurrent resets queue behind this one
             $user = User::where('email', $request->email)
                 ->lockForUpdate()
@@ -183,6 +208,7 @@ class UserController extends Controller
                 now()->greaterThan($user->pin_reset_expires_at) ||
                 ! Hash::check((string) $request->code, $user->pin_reset_code)
             ) {
+                RateLimiter::hit($key, 900);
                 abort(400, 'Invalid or expired code.');
             }
 
@@ -190,6 +216,8 @@ class UserController extends Controller
             $user->pin_reset_code       = null;
             $user->pin_reset_expires_at = null;
             $user->save();
+
+            RateLimiter::clear($key);
         });
 
         return response()->json(['message' => 'Transaction PIN reset successfully.']);
@@ -197,7 +225,7 @@ class UserController extends Controller
 
     public function updateBankDetails(Request $request)
     {
-        $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
         $request->validate([
             'account_number' => 'required|numeric|digits_between:10,12',
@@ -299,66 +327,60 @@ class UserController extends Controller
         }
     }
 
-    public function getUserStats()
+    public function getUserStats(Request $request)
     {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
-            $landsOwned = DB::table('user_land')
-                ->where('user_id', $user->id)->where('units', '>', 0)
-                ->distinct('land_id')->count('land_id');
+        $landsOwned = DB::table('user_land')
+            ->where('user_id', $user->id)->where('units', '>', 0)
+            ->distinct('land_id')->count('land_id');
 
-            $unitsOwned = DB::table('user_land')
-                ->where('user_id', $user->id)->sum('units');
+        $unitsOwned = DB::table('user_land')
+            ->where('user_id', $user->id)->sum('units');
 
-            $investedData = DB::table('purchases')
-                ->select(DB::raw('SUM(total_amount_paid_kobo) as total_paid, SUM(total_amount_received_kobo) as total_received'))
-                ->where('user_id', $user->id)
-                ->whereIn('status', ['completed', 'partially_sold'])
-                ->first();
+        $investedData = DB::table('purchases')
+            ->select(DB::raw('SUM(total_amount_paid_kobo) as total_paid, SUM(total_amount_received_kobo) as total_received'))
+            ->where('user_id', $user->id)
+            ->whereIn('status', ['completed', 'partially_sold'])
+            ->first();
 
-            $totalInvestedKobo = ($investedData->total_paid ?? 0) - ($investedData->total_received ?? 0);
+        $totalInvestedKobo = ($investedData->total_paid ?? 0) - ($investedData->total_received ?? 0);
 
-            $totalWithdrawn = DB::table('withdrawals')
-                ->where('user_id', $user->id)->where('status', 'completed')
-                ->sum('amount_kobo');
+        $totalWithdrawn = DB::table('withdrawals')
+            ->where('user_id', $user->id)->where('status', 'completed')
+            ->sum('amount_kobo');
 
-            $pendingWithdrawals = DB::table('withdrawals')
-                ->where('user_id', $user->id)->where('status', 'pending')->count();
+        $pendingWithdrawals = DB::table('withdrawals')
+            ->where('user_id', $user->id)->where('status', 'pending')->count();
 
-            $totalRewardsClaimed = DB::table('referral_rewards')
-                ->where('user_id', $user->id)->where('claimed', true)
-                ->sum('amount_kobo');
+        $totalRewardsClaimed = DB::table('referral_rewards')
+            ->where('user_id', $user->id)->where('claimed', true)
+            ->sum('amount_kobo');
 
-            return response()->json([
-                'success' => true,
-                'data'    => [
-                    'lands_owned'                => $landsOwned,
-                    'units_owned'                => $unitsOwned,
-                    'total_invested'             => $totalInvestedKobo / 100,
-                    'total_invested_kobo'        => $totalInvestedKobo,
-                    'total_withdrawn'            => $totalWithdrawn / 100,
-                    'total_withdrawn_kobo'       => $totalWithdrawn,
-                    'pending_withdrawals'        => $pendingWithdrawals,
-                    'balance'                    => $user->balance_kobo / 100,
-                    'balance_kobo'               => $user->balance_kobo,
-                    'rewards_balance'            => $user->rewards_balance_kobo / 100,
-                    'rewards_balance_kobo'       => $user->rewards_balance_kobo,
-                    'total_spendable'            => $user->total_spendable_kobo / 100,
-                    'total_spendable_kobo'       => $user->total_spendable_kobo,
-                    'total_rewards_claimed'      => $totalRewardsClaimed / 100,
-                    'total_rewards_claimed_kobo' => $totalRewardsClaimed,
-                    'withdrawal_daily_limit'          => $this->dailyLimitKobo() / 100,
-                    'withdrawal_daily_used_kobo'      => $user->withdrawal_day === now()->toDateString()
-                        ? $user->withdrawal_daily_total_kobo : 0,
-                    'withdrawal_daily_remaining_kobo' => $this->dailyRemainingKobo($user),
-                ],
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('getUserStats error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Error fetching stats.'], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'lands_owned'                     => $landsOwned,
+                'units_owned'                     => $unitsOwned,
+                'total_invested'                  => $totalInvestedKobo / 100,
+                'total_invested_kobo'             => $totalInvestedKobo,
+                'total_withdrawn'                 => $totalWithdrawn / 100,
+                'total_withdrawn_kobo'            => $totalWithdrawn,
+                'pending_withdrawals'             => $pendingWithdrawals,
+                'balance'                         => $user->balance_kobo / 100,
+                'balance_kobo'                    => $user->balance_kobo,
+                'rewards_balance'                 => $user->rewards_balance_kobo / 100,
+                'rewards_balance_kobo'            => $user->rewards_balance_kobo,
+                'total_spendable'                 => $user->total_spendable_kobo / 100,
+                'total_spendable_kobo'            => $user->total_spendable_kobo,
+                'total_rewards_claimed'           => $totalRewardsClaimed / 100,
+                'total_rewards_claimed_kobo'      => $totalRewardsClaimed,
+                'withdrawal_daily_limit'          => $this->dailyLimitKobo() / 100,
+                'withdrawal_daily_used_kobo'      => $user->withdrawal_day === now()->toDateString()
+                    ? $user->withdrawal_daily_total_kobo : 0,
+                'withdrawal_daily_remaining_kobo' => $this->dailyRemainingKobo($user),
+            ],
+        ]);
     }
 
     private function dailyLimitKobo(): int
@@ -374,63 +396,54 @@ class UserController extends Controller
         return max(0, $this->dailyLimitKobo() - $used);
     }
 
-    public function getUserTransactions()
+    public function getUserTransactions(Request $request)
     {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
+        $user = $request->user();
 
-            $deposits = Deposit::where('user_id', $user->id)
-                ->select('id', 'amount_kobo', 'transaction_fee', 'total_kobo', 'status', 'created_at')
-                ->get()->map(fn ($d) => [
-                    'type'            => 'Deposit',
-                    'amount'          => $d->amount_kobo / 100,
-                    'transaction_fee' => ($d->transaction_fee ?? 0) / 100,
-                    'total'           => ($d->total_kobo ?? $d->amount_kobo) / 100,
-                    'status'          => ucfirst($d->status),
-                    'date'            => $d->created_at->toIso8601String(),
-                ]);
+        $deposits = Deposit::where('user_id', $user->id)
+            ->select('id', 'amount_kobo', 'transaction_fee', 'total_kobo', 'status', 'created_at')
+            ->get()->map(fn ($d) => [
+                'type'            => 'Deposit',
+                'amount'          => $d->amount_kobo / 100,
+                'transaction_fee' => ($d->transaction_fee ?? 0) / 100,
+                'total'           => ($d->total_kobo ?? $d->amount_kobo) / 100,
+                'status'          => ucfirst($d->status),
+                'date'            => $d->created_at->toIso8601String(),
+            ]);
 
-            $withdrawals = Withdrawal::where('user_id', $user->id)
-                ->select('id', 'amount_kobo', 'status', 'created_at')
-                ->get()->map(fn ($w) => [
-                    'type'   => 'Withdrawal',
-                    'amount' => $w->amount_kobo / 100,
-                    'status' => ucfirst($w->status),
-                    'date'   => $w->created_at->toIso8601String(),
-                ]);
+        $withdrawals = Withdrawal::where('user_id', $user->id)
+            ->select('id', 'amount_kobo', 'status', 'created_at')
+            ->get()->map(fn ($w) => [
+                'type'   => 'Withdrawal',
+                'amount' => $w->amount_kobo / 100,
+                'status' => ucfirst($w->status),
+                'date'   => $w->created_at->toIso8601String(),
+            ]);
 
-            $landTransactions = Transaction::where('user_id', $user->id)
-                ->select('id', 'land_id', 'type', 'units', 'amount_kobo', 'status', 'created_at')
-                ->with('land:id,title')
-                ->get()->map(fn ($t) => [
-                    'type'   => ucfirst($t->type),
-                    'land'   => $t->land->title ?? 'Unknown',
-                    'amount' => abs($t->amount_kobo) / 100,
-                    'units'  => abs($t->units),
-                    'status' => ucfirst($t->status),
-                    'date'   => $t->created_at->toIso8601String(),
-                ]);
+        $landTransactions = Transaction::where('user_id', $user->id)
+            ->select('id', 'land_id', 'type', 'units', 'amount_kobo', 'status', 'created_at')
+            ->with('land:id,title')
+            ->get()->map(fn ($t) => [
+                'type'   => ucfirst($t->type),
+                'land'   => $t->land->title ?? 'Unknown',
+                'amount' => abs($t->amount_kobo) / 100,
+                'units'  => abs($t->units),
+                'status' => ucfirst($t->status),
+                'date'   => $t->created_at->toIso8601String(),
+            ]);
 
-            $transactions = collect()
-                ->merge($deposits)->merge($withdrawals)->merge($landTransactions)
-                ->sortByDesc('date')->values();
+        $transactions = collect()
+            ->merge($deposits)->merge($withdrawals)->merge($landTransactions)
+            ->sortByDesc('date')->values();
 
-            return response()->json(['success' => true, 'data' => $transactions]);
-
-        } catch (\Exception $e) {
-            Log::error('getUserTransactions error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Error fetching transactions.'], 500);
-        }
+        return response()->json(['success' => true, 'data' => $transactions]);
     }
 
     public function getPortfolioSummary(Request $request)
     {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
-            return response()->json(['success' => true, 'data' => PortfolioService::summary($user->id)]);
-        } catch (\Exception $e) {
-            Log::error('Portfolio summary error', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Error fetching portfolio summary.'], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'data'    => PortfolioService::summary($request->user()->id),
+        ]);
     }
 }

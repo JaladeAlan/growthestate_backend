@@ -12,6 +12,11 @@ class Transaction extends Model
     protected $fillable = ['land_id', 'user_id', 'type','units', 'amount_kobo', 'status', 
      'reference', 'message', 'transaction_date'];
 
+    protected $casts = [
+        'transaction_date' => 'datetime',
+        'amount_kobo'      => 'integer',
+    ];
+
 
     // A transaction belongs to a land
     public function land()

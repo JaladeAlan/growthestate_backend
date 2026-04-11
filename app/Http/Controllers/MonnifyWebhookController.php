@@ -53,18 +53,20 @@ class MonnifyWebhookController extends Controller
             return response()->json(['status' => 'missing_reference'], 400);
         }
 
-      
         $deposit = Deposit::where('reference', $reference)->first();
 
         if (! $deposit) {
             Log::warning('Deposit not found for Monnify webhook', [
-                'reference' => $reference
+                'reference' => $reference,
             ]);
             return response()->json(['status' => 'deposit_not_found'], 404);
         }
 
-    
-        if ($deposit->status === 'completed') {
+        if ($deposit->processed_at !== null) {
+            Log::info('Monnify webhook: already processed, skipping', [
+                'reference'    => $reference,
+                'processed_at' => $deposit->processed_at,
+            ]);
             return response()->json(['status' => 'already_processed']);
         }
 
@@ -85,7 +87,9 @@ class MonnifyWebhookController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if ($lockedDeposit->status === 'completed') {
+            // Re-check inside the lock — two deliveries that both passed the
+            // outer guard simultaneously queue here; the second one exits.
+            if ($lockedDeposit->processed_at !== null) {
                 return;
             }
 
@@ -93,38 +97,49 @@ class MonnifyWebhookController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            // Credit only principal
+            // Credit principal only — fee was collected by the gateway upfront
+            // (user paid total_kobo; only amount_kobo reaches their wallet).
             $user->balance_kobo += $lockedDeposit->amount_kobo;
             $user->save();
 
+            $balanceAfter = $user->balance_kobo;
+
             $lockedDeposit->update([
-                'status' => 'completed'
+                'status'       => 'completed',
+                'processed_at' => now(),
             ]);
 
-            // Ledger: deposit
+            // Ledger: deposit credit
             DB::table('ledger_entries')->insert([
                 'uid'           => $user->id,
                 'type'          => 'deposit',
                 'amount_kobo'   => $lockedDeposit->amount_kobo,
-                'balance_after' => $user->balance_kobo,
+                'balance_after' => $balanceAfter,
                 'reference'     => $lockedDeposit->reference,
                 'created_at'    => now(),
             ]);
 
-            // Ledger: transaction fee
+            // Ledger: fee audit record (gateway-collected, no balance change)
             DB::table('ledger_entries')->insert([
                 'uid'           => $user->id,
                 'type'          => 'transaction_fee',
                 'amount_kobo'   => $lockedDeposit->transaction_fee,
-                'balance_after' => $user->balance_kobo,
+                'balance_after' => $balanceAfter,
                 'reference'     => $lockedDeposit->reference,
                 'created_at'    => now(),
             ]);
 
-            $user->notify(new \App\Notifications\DepositConfirmed(
-                $deposit->amount_kobo,
-                $deposit->reference
-            ));
+            try {
+                $user->notify(new \App\Notifications\DepositConfirmed(
+                    $lockedDeposit->amount_kobo,
+                    $lockedDeposit->reference
+                ));
+            } catch (\Exception $e) {
+                Log::warning('DepositConfirmed notification failed', [
+                    'deposit_id' => $lockedDeposit->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
         });
 
         return response()->json(['status' => 'processed']);
