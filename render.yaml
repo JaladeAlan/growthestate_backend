@@ -57,15 +57,15 @@ services:
       - key: REVERB_SCHEME
         value: https
 
-  # ── Queue Worker ──────────────────────────────────────────────────────────────
-  - type: worker
-    name: sproutvest-queue
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: starter
-    startCommand: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=90
-    envVars:
-      - fromGroup: reverb-credentials
-      - key: APP_ENV
-        value: production
+  # # ── Queue Worker ──────────────────────────────────────────────────────────────
+  # - type: worker
+  #   name: sproutvest-queue
+  #   runtime: docker
+  #   dockerfilePath: ./Dockerfile
+  #   dockerContext: .
+  #   plan: starter
+  #   startCommand: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=90
+  #   envVars:
+  #     - fromGroup: reverb-credentials
+  #     - key: APP_ENV
+  #       value: production
