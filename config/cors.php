@@ -22,21 +22,16 @@ return [
     |
     | Environment-variable override lets you manage environments without
     | changing code:
-    |   CORS_ALLOWED_ORIGINS=https://sproutvest.com,https://app.sproutvest.com
+    |   CORS_ALLOWED_ORIGINS=https://reu.ng,https://app.reu.ng
     */
     'allowed_origins' => array_filter(
         array_map(
             'trim',
             explode(',', env('CORS_ALLOWED_ORIGINS', implode(',', [
                 // ── Production ────────────────────────────────────────────
-                'https://sproutvest.com',
-                'https://www.sproutvest.com',
-                'https://app.sproutvest.com',
-
-                // ── Staging / preview ─────────────────────────────────────
-                'https://sproutvest-six.vercel.app',
-                'https://sproutapp-eta.vercel.app',
-                'https://growthfrontends.vercel.app',
+                'https://reu.ng/',
+                'https://www.reu.ng',
+                'https://app.reu.ng',
             
                 // ── Local development ─────────────────────────────────────
                 'http://localhost:3000',
