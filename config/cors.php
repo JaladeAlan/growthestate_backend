@@ -29,7 +29,7 @@ return [
             'trim',
             explode(',', env('CORS_ALLOWED_ORIGINS', implode(',', [
                 // ── Production ────────────────────────────────────────────
-                'https://reu.ng/',
+                'https://reu.ng',
                 'https://www.reu.ng',
                 'https://app.reu.ng',
             
