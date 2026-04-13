@@ -508,9 +508,9 @@ class PurchaseController extends Controller
         $maxDiscountKobo = (int) config('rewards.max_discount_kobo', 500000);
 
         $applyCap = function (int $rawKobo) use ($maxDiscountKobo): array {
-            if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
-                return [$maxDiscountKobo, true];
-            }
+            // if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
+            //     return [$maxDiscountKobo, true];
+            // }
             return [$rawKobo, false];
         };
 
