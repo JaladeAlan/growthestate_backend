@@ -64,7 +64,7 @@ services:
   #   dockerfilePath: ./Dockerfile
   #   dockerContext: .
   #   plan: starter
-  #   startCommand: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=90
+  #   startCommand: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=120
   #   envVars:
   #     - fromGroup: reverb-credentials
   #     - key: APP_ENV

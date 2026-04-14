@@ -94,9 +94,6 @@ return [
                 'postmark',
             ],
         ],
-
-        'default' => env('MAIL_MAILER', 'log'),
-
     ],
 
     /*
