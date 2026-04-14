@@ -1,15 +1,5 @@
-envVarGroups:
-  - name: reverb-credentials
-    envVars:
-      - key: REVERB_APP_ID
-        sync: false
-      - key: REVERB_APP_KEY
-        sync: false
-      - key: REVERB_APP_SECRET
-        sync: false
-
 services:
-  # ── Laravel App (web) ────────────────────────────────────────────────────────
+  # ── Web Service (Laravel App) ─────────────────────────────
   - type: web
     name: sproutvest-app
     runtime: docker
@@ -18,54 +8,25 @@ services:
     plan: starter
     healthCheckPath: /api/health
     envVars:
-      - fromGroup: reverb-credentials
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
         value: false
-      - key: BROADCAST_CONNECTION
-        value: reverb
-      - key: REVERB_HOST
-        fromService:
-          name: sproutvest-reverb
-          type: web         
-          property: host
-      - key: REVERB_PORT
-        value: 443
-      - key: REVERB_SCHEME
-        value: https
 
-  # ── Reverb WebSocket Server ───────────────────────────────────────────────────
-  - type: web                
-    name: sproutvest-reverb
+  # ── Queue Worker (separate service) ───────────────────────
+  - type: worker
+    name: sproutvest-queue
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: starter
-    startCommand: php artisan reverb:start --host=0.0.0.0 --port=8081 --debug
-    healthCheckPath: /up     
+    startCommand: >
+      php artisan queue:work redis
+      --sleep=3
+      --tries=3
+      --timeout=120
+      --memory=128
+      --max-jobs=100
     envVars:
-      - fromGroup: reverb-credentials
       - key: APP_ENV
         value: production
-      - key: BROADCAST_CONNECTION
-        value: reverb
-      - key: REVERB_HOST
-        value: 0.0.0.0
-      - key: REVERB_PORT
-        value: 8081
-      - key: REVERB_SCHEME
-        value: https
-
-  # # ── Queue Worker ──────────────────────────────────────────────────────────────
-  # - type: worker
-  #   name: sproutvest-queue
-  #   runtime: docker
-  #   dockerfilePath: ./Dockerfile
-  #   dockerContext: .
-  #   plan: starter
-  #   startCommand: php artisan queue:work redis --queue=emails,default --sleep=3 --tries=3 --timeout=120
-  #   envVars:
-  #     - fromGroup: reverb-credentials
-  #     - key: APP_ENV
-  #       value: production
