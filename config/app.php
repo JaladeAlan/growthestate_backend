@@ -11,7 +11,7 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'name' => env('APP_NAME', 'Sproutvest'),
+    'name' => env('APP_NAME', 'REU.ng'),
 
     /*
     |--------------------------------------------------------------------------
@@ -35,9 +35,9 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'url' => env('APP_URL', 'http://localhost'),
+    'url' => env('APP_URL', 'https://api.reu.ng'),
 
-    'frontend_url' => env('FRONTEND_URL', 'https://sproutapp-eta.vercel.app'),
+    'frontend_url' => env('FRONTEND_URL', 'https://reu.ng'),
 
     /*
     |--------------------------------------------------------------------------

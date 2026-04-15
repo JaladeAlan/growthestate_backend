@@ -19,12 +19,12 @@
                                 <tr>
                                     <td style="background:linear-gradient(135deg,#C8873A,#E8A850);border-radius:10px;width:36px;height:36px;text-align:center;vertical-align:middle;">
                                         <span style="color:#0D1F1A;font-weight:900;font-size:16px;line-height:36px;">
-                                            {{ strtoupper(substr(config('app.name', 'S'), 0, 1)) }}
+                                            {{ strtoupper(substr(config('app.name', 'R'), 0, 1)) }}
                                         </span>
                                     </td>
                                     <td style="padding-left:10px;vertical-align:middle;">
                                         <span style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">
-                                            {{ config('app.name', 'Sproutvest') }}
+                                            {{ config('app.name', 'REU.ng') }}
                                         </span>
                                     </td>
                                 </tr>
@@ -148,13 +148,13 @@
                         <td style="padding-top:24px;text-align:center;">
                             <p style="margin:0 0 6px;color:rgba(255,255,255,0.2);font-size:12px;">
                                 Need help? Email us at
-                                <a href="mailto:{{ config('mail.from.address', 'hello@sproutvest.com') }}"
+                                <a href="mailto:{{ config('mail.to.address', 'support@reu.ng') }}"
                                    style="color:rgba(200,135,58,0.7);text-decoration:none;">
-                                    {{ config('mail.from.address', 'hello@sproutvest.com') }}
+                                    {{ config('mail.to.address', 'support@reu.ng') }}
                                 </a>
                             </p>
                             <p style="margin:0;color:rgba(255,255,255,0.12);font-size:11px;">
-                                &copy; {{ date('Y') }} {{ config('app.name', 'Sproutvest') }}. All rights reserved.
+                                &copy; {{ date('Y') }} {{ config('app.name', 'REU.ng') }}. All rights reserved.
                             </p>
                         </td>
                     </tr>
