@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use App\Services\MailService;
 
 /**
  * Handles transaction PIN lifecycle.
@@ -145,8 +146,7 @@ class PinController extends Controller
             'pin_reset_expires_at' => $expiresAt,
         ]);
 
-        Mail::to($user->email)->queue(new \App\Mail\TransactionPinResetMail($user, $code));
-
+        MailService::queue(new \App\Mail\TransactionPinResetMail($user, $code), $user->email);
         return response()->json([
             'success' => true,
             'message' => 'A 6-digit reset code has been sent to your email.',

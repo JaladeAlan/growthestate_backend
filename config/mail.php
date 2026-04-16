@@ -34,45 +34,51 @@ return [
     |            "failover", "roundrobin"
     |
     */
-
     'mailers' => [
 
         'smtp' => [
-            'transport' => 'smtp',
-            'url' => env('MAIL_URL'),
-            'host' => env('MAIL_HOST', '127.0.0.1'),
-            'port' => env('MAIL_PORT', 2525),
-            'encryption' => env('MAIL_ENCRYPTION', 'tls'),
-            'username' => env('MAIL_USERNAME'),
-            'password' => env('MAIL_PASSWORD'),
-            'timeout' => null,
+            'transport'    => 'smtp',
+            'url'          => env('MAIL_URL'),
+            'host'         => env('MAIL_HOST', '127.0.0.1'),
+            'port'         => env('MAIL_PORT', 1025),
+            'encryption'   => env('MAIL_ENCRYPTION', 'tls'),
+            'username'     => env('MAIL_USERNAME'),
+            'password'     => env('MAIL_PASSWORD'),
+            'timeout'      => null,
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url(env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
-        ],
-
-        'ses' => [
-            'transport' => 'ses',
-        ],
-
-        'postmark' => [
-            'transport' => 'postmark',
-            // 'message_stream_id' => env('POSTMARK_MESSAGE_STREAM_ID'),
-            // 'client' => [
-            //     'timeout' => 5,
-            // ],
         ],
 
         'resend' => [
             'transport' => 'resend',
         ],
 
+       'mailtrap' => [
+            'transport' => 'mailtrap',
+        ],
+        'mailersend' => [
+            'transport' => 'mailersend',
+        ],
+
+        'mailgun' => [
+            'transport' => 'mailgun',
+        ],
+
+        'postmark' => [
+            'transport' => 'postmark',
+        ],
+
+        'ses' => [
+            'transport' => 'ses',
+        ],
+
         'sendmail' => [
             'transport' => 'sendmail',
-            'path' => env('MAIL_SENDMAIL_PATH', '/usr/sbin/sendmail -bs -i'),
+            'path'      => env('MAIL_SENDMAIL_PATH', '/usr/sbin/sendmail -bs -i'),
         ],
 
         'log' => [
             'transport' => 'log',
-            'channel' => storage_path('logs/laravel.log'),
+            'channel'   => storage_path('logs/laravel.log'),
         ],
 
         'array' => [
@@ -81,19 +87,14 @@ return [
 
         'failover' => [
             'transport' => 'failover',
-            'mailers' => [
-                'smtp',
-                'log',
-            ],
+            'mailers'   => ['resend', 'mailersend', 'mailgun', 'postmark'],
         ],
 
-        'roundrobin' => [
+       'roundrobin' => [
             'transport' => 'roundrobin',
-            'mailers' => [
-                'ses',
-                'postmark',
-            ],
+            'mailers'   => ['ses', 'resend', 'postmark', 'mailgun'],
         ],
+
     ],
 
     /*
@@ -115,4 +116,5 @@ return [
     'to' => [
         'address' => env('SUPPORT_ADDRESS', 'support@reu.ng'),
     ],
+
 ];

@@ -53,8 +53,8 @@ return [
     'channels' => [
 
         'stack' => [
-            'driver' => 'stack',
-            'channels' => explode(',', env('LOG_STACK', 'single')),
+            'driver'            => 'stack',
+            'channels'          => explode(',', env('LOG_STACK', 'single,telegram')),
             'ignore_exceptions' => false,
         ],
 
@@ -73,6 +73,17 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'telegram' => [
+            'driver'  => 'custom',
+            'via'     => \App\Logging\TelegramLogger::class,
+            'level'   => 'error',
+        ],
+
+        'mail_ops' => [
+            'driver'   => 'stack',
+            'channels' => ['single', 'telegram'],
+        ],
+        
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

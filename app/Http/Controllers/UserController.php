@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
+use App\Services\MailService;
 
 class UserController extends Controller
 {
@@ -130,7 +132,7 @@ class UserController extends Controller
             $user->save();
 
             try {
-                Mail::to($user->email)->queue(new TransactionPinResetMail($user, $code));
+              MailService::queue(new TransactionPinResetMail($user, $code), $user->email);
             } catch (\Exception $e) {
                 Log::error('Failed to queue PIN reset email', [
                     'user_id' => $user->id,

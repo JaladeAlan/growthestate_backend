@@ -8,12 +8,29 @@ use Illuminate\Support\Facades\Log;
 
 class MailService
 {
-    // Thresholds before switching
-    private const RESEND_LIMIT    = 95;
-    private const MAILERSEND_LIMIT = 95;
+    private const LIMITS = [
+        'resend'      => 95,
+        'mailtrap'    => 95,
+        'mailersend'  => 95,
+        'mailgun'     => 95,
+        'postmark'    => 95,
+    ];
+
+    private const MAILERS = ['resend', 'mailtrap', 'mailersend', 'mailgun', 'postmark'];
+    
+    /**
+     * Days before expiry to start warning.
+     */
+    private const EXPIRY_WARN_DAYS = 7;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC
+    // ─────────────────────────────────────────────────────────────────────────
 
     public static function send($mailable, string $to): void
     {
+        self::checkMailerSendTokenExpiry();
+
         $mailer = self::resolveMailer();
 
         try {
@@ -21,64 +38,140 @@ class MailService
             self::increment($mailer);
         } catch (\Throwable $e) {
             Log::error("Mail failed on {$mailer}", ['error' => $e->getMessage()]);
-
-            // Try next mailer on failure
-            $fallback = self::nextMailer($mailer);
-            Mail::mailer($fallback)->to($to)->send($mailable);
-            self::increment($fallback);
+            self::tryFallback($mailable, $to, $mailer);
         }
     }
 
     public static function queue($mailable, string $to): void
     {
+        self::checkMailerSendTokenExpiry();
+
         $mailer = self::resolveMailer();
         Mail::mailer($mailer)->to($to)->queue($mailable);
         self::increment($mailer);
     }
 
-    private static function resolveMailer(): string
-    {
-        $resendCount      = (int) Cache::get('mail_count:resend', 0);
-        $mailersendCount  = (int) Cache::get('mail_count:mailersend', 0);
-
-        if ($resendCount < self::RESEND_LIMIT) {
-            return 'resend';
-        }
-
-        if ($mailersendCount < self::MAILERSEND_LIMIT) {
-            return 'mailersend';
-        }
-
-        // Both exhausted — reset and start over (or throw/alert)
-        Log::warning('All mail quotas exhausted, resetting counts.');
-        Cache::put('mail_count:resend', 0);
-        Cache::put('mail_count:mailersend', 0);
-
-        return 'resend';
-    }
-
-    private static function nextMailer(string $current): string
-    {
-        return $current === 'resend' ? 'mailersend' : 'resend';
-    }
-
-    private static function increment(string $mailer): void
-    {
-        $key = "mail_count:{$mailer}";
-        Cache::increment($key);
-    }
-
     public static function counts(): array
     {
-        return [
-            'resend'      => Cache::get('mail_count:resend', 0),
-            'mailersend'  => Cache::get('mail_count:mailersend', 0),
-        ];
+        $today  = now()->toDateString();
+        $counts = [];
+
+        foreach (self::MAILERS as $mailer) {
+            $counts[$mailer] = [
+                'sent'      => (int) Cache::get(self::key($mailer, $today), 0),
+                'limit'     => self::LIMITS[$mailer],
+                'remaining' => self::LIMITS[$mailer] - (int) Cache::get(self::key($mailer, $today), 0),
+            ];
+        }
+
+        return $counts;
     }
 
     public static function resetCounts(): void
     {
-        Cache::put('mail_count:resend', 0);
-        Cache::put('mail_count:mailersend', 0);
+        $today = now()->toDateString();
+        foreach (self::MAILERS as $mailer) {
+            Cache::forget(self::key($mailer, $today));
+        }
+        Log::info('MailService: daily counts reset manually.');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PRIVATE
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static function checkMailerSendTokenExpiry(): void
+    {
+        $expiresAt = env('MAILERSEND_TOKEN_EXPIRES_AT');
+
+        if (! $expiresAt) {
+            return;
+        }
+
+        $cacheKey = 'mailersend_token_expiry_checked:' . now()->toDateString();
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
+        Cache::put($cacheKey, true, now()->endOfDay()->diffInSeconds(now()));
+
+        $expiry   = \Carbon\Carbon::parse($expiresAt)->startOfDay();
+        $daysLeft = (int) now()->startOfDay()->diffInDays($expiry, false);
+
+        if ($daysLeft < 0) {
+            Log::channel('mail_ops')->error('MailerSend API token has EXPIRED.', [
+                'expired_at' => $expiresAt,
+                'days_ago'   => abs($daysLeft),
+                'action'     => 'Rotate token immediately in MailerSend dashboard and update MAILERSEND_API_KEY.',
+            ]);
+        } elseif ($daysLeft <= self::EXPIRY_WARN_DAYS) {
+            Log::channel('mail_ops')->warning('MailerSend API token is expiring soon.', [
+                'expires_at' => $expiresAt,
+                'days_left'  => $daysLeft,
+                'action'     => 'Rotate token in MailerSend dashboard and update MAILERSEND_API_KEY.',
+            ]);
+        }
+    }
+
+    private static function resolveMailer(): string
+    {
+        $today = now()->toDateString();
+
+        foreach (self::MAILERS as $mailer) {
+            $count = (int) Cache::get(self::key($mailer, $today), 0);
+            if ($count < self::LIMITS[$mailer]) {
+                return $mailer;
+            }
+        }
+
+        Log::critical('MailService: ALL mail providers exhausted for today.', [
+            'date'   => $today,
+            'counts' => self::counts(),
+        ]);
+
+        Cache::forget(self::key('resend', $today));
+        return 'resend';
+    }
+
+    private static function tryFallback($mailable, string $to, string $failed): void
+    {
+        $today     = now()->toDateString();
+        $fallbacks = array_filter(
+            self::MAILERS,
+            fn($m) => $m !== $failed &&
+                      (int) Cache::get(self::key($m, $today), 0) < self::LIMITS[$m]
+        );
+
+        if (empty($fallbacks)) {
+            Log::critical('MailService: no fallback available.', ['failed_mailer' => $failed, 'to' => $to]);
+            throw new \RuntimeException('All mail providers failed or exhausted.');
+        }
+
+        $fallback = array_values($fallbacks)[0];
+
+        try {
+            Mail::mailer($fallback)->to($to)->send($mailable);
+            self::increment($fallback);
+            Log::info("MailService: fallback to {$fallback} succeeded.");
+        } catch (\Throwable $e) {
+            Log::error("MailService: fallback {$fallback} also failed.", ['error' => $e->getMessage()]);
+            self::tryFallback($mailable, $to, $fallback);
+        }
+    }
+
+    private static function increment(string $mailer): void
+    {
+        $today = now()->toDateString();
+        $key   = self::key($mailer, $today);
+
+        Cache::increment($key);
+
+        $ttl = now()->endOfDay()->diffInSeconds(now());
+        Cache::put($key, Cache::get($key, 1), $ttl);
+    }
+
+    private static function key(string $mailer, string $date): string
+    {
+        return "mail_count:{$mailer}:{$date}";
     }
 }

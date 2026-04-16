@@ -14,8 +14,13 @@
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "league/flysystem-aws-s3-v3": "3.0",
+        "mailersend/laravel-driver": "^3.1",
         "predis/predis": "^3.4",
+        "railsware/mailtrap-php": "^3.11",
         "resend/resend-laravel": "^1.3",
+        "symfony/http-client": "7.2",
+        "symfony/mailgun-mailer": "7.2",
+        "symfony/postmark-mailer": "^7.4",
         "tymon/jwt-auth": "^2.2",
         "unicodeveloper/laravel-paystack": "^1.2"
     },

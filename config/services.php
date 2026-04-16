@@ -28,6 +28,20 @@ return [
         'key' => env('RESEND_KEY'),
     ],
 
+    'mailgun' => [
+        'domain'   => env('MAILGUN_DOMAIN'),
+        'secret'   => env('MAILGUN_SECRET'),
+        'endpoint' => env('MAILGUN_ENDPOINT', 'api.eu.mailgun.net'),
+    ],
+
+    'mailtrap' => [
+        'api_key' => env('MAILTRAP_API_KEY'),
+    ],
+
+    'mailersend' => [
+        'api_key' => env('MAILERSEND_API_KEY'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
@@ -62,5 +76,10 @@ return [
         'base_url'    => env('OPAY_BASE_URL', 'https://sandboxapi.opayweb.com'),
     ],
     
-    'openai' => ['key' => env('OPENAI_API_KEY')]
+    'openai' => ['key' => env('OPENAI_API_KEY')],
+
+    'telegram' => [
+        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'chat_id'   => env('TELEGRAM_CHAT_ID'),
+    ],
 ];

@@ -13,6 +13,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Mail;
+use App\Services\MailService;
 use App\Mail\VerifyEmailMail;
 use App\Mail\ResetPasswordEmail;
 
@@ -132,7 +133,7 @@ class AuthController extends Controller
             RateLimiter::hit($ipKey, 3600);
 
             try {
-                Mail::to($user->email)->queue(new VerifyEmailMail($user, $verificationCode));
+                MailService::queue(new VerifyEmailMail($user, $verificationCode), $user->email);
             } catch (\Exception $e) {
                 Log::error("Failed to queue verification email to user {$user->id}: " . $e->getMessage());
             }
@@ -263,7 +264,7 @@ class AuthController extends Controller
 
         try {
             // Queued — no longer blocks the request thread
-            Mail::to($user->email)->queue(new ResetPasswordEmail($user, $resetCode));
+            MailService::queue(new ResetPasswordEmail($user, $resetCode), $user->email);
         } catch (\Exception $e) {
             Log::error('Failed to queue password reset email', [
                 'user_id' => $user->id,
@@ -455,8 +456,7 @@ class AuthController extends Controller
         $user->save();
 
         try {
-            // Queued — was previously synchronous send()
-            Mail::to($user->email)->queue(new VerifyEmailMail($user, $verificationCode));
+            MailService::queue(new VerifyEmailMail($user, $verificationCode), $user->email);
         } catch (\Exception $e) {
             Log::error('Failed to queue verification email', [
                 'user_id' => $user->id,

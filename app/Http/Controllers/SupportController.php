@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Services\MailService;
 
 class SupportController extends Controller
 {
@@ -324,7 +325,6 @@ class SupportController extends Controller
         return response()->json([
             'success' => true,
             'data'    => $ticket->load(['messages', 'agent:id,name']), 
-
         ]);
     }
 
@@ -669,13 +669,19 @@ PROMPT;
      */
     private function notifyAdminHighPriority(SupportTicket $ticket): void
     {
-        Log::channel('slack')->info('🔴 High Priority Support Ticket', [
-            'reference' => $ticket->reference,
-            'subject'   => $ticket->subject,
-            'category'  => $ticket->category,
-            'user_id'   => $ticket->user_id,
-        ]);
+        try {
+            $token = config('services.telegram.bot_token');
 
-        // TODO: Mail::to(config('support.admin_email'))->queue(new HighPriorityTicketAlert($ticket));
+            Http::post("https://api.telegram.org/bot{$token}/sendMessage", [
+                'chat_id'    => config('services.telegram.chat_id'),
+                'text'       => "🔴 High Priority Ticket\n#{$ticket->reference} — {$ticket->subject}",
+                'parse_mode' => 'Markdown',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Telegram notification failed', [
+                'ticket'    => $ticket->reference,
+                'error'     => $e->getMessage(),
+            ]);
+        }
     }
 }
