@@ -93,29 +93,14 @@ class TestMail extends Mailable
 {
     public function __construct(public readonly string $mailerName) {}
 
-   public function envelope(): Envelope
+    public function build()
     {
-        return new Envelope(
-            from: new \Illuminate\Mail\Mailables\Address(
-                config('mail.from.address'),
-                config('mail.from.name'),
-            ),
-            subject: "[REU.ng] Test email via {$this->mailerName}",
-        );
-    }
-    public function content(): Content
-    {
-        return new Content(
-            htmlString: <<<HTML
-                <p>This is a test email sent through <strong>{$this->mailerName}</strong>.</p>
-                <p>If you received this, the mailer is configured correctly.</p>
-                <p style="color:#888;font-size:12px;">Sent at: {$this->sentAt()}</p>
-            HTML,
-        );
-    }
-
-    private function sentAt(): string
-    {
-        return now()->toDateTimeString() . ' (' . config('app.timezone', 'UTC') . ')';
+        return $this->from(config('mail.from.address'), config('mail.from.name'))
+                    ->subject("[REU.ng] Test email via {$this->mailerName}")
+                    ->html("
+                        <p>This is a test email sent through <strong>{$this->mailerName}</strong>.</p>
+                        <p>If you received this, the mailer is configured correctly.</p>
+                        <p style='color:#888;font-size:12px;'>Sent at: " . now()->toDateTimeString() . " (" . config('app.timezone', 'UTC') . ")</p>
+                    ");
     }
 }
