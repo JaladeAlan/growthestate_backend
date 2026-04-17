@@ -6,7 +6,6 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mailer\Transport\AbstractTransport;
 use Symfony\Component\Mime\MessageConverter;
 use Mailtrap\Config;
-use Mailtrap\Helper\ResponseHelper;
 use Mailtrap\MailtrapClient;
 
 class MailtrapTransport extends AbstractTransport
@@ -22,7 +21,7 @@ class MailtrapTransport extends AbstractTransport
 
         $mailtrap = new MailtrapClient(new Config($this->apiKey));
 
-        $mailtrap->testing()->emails()->send($email);
+        $mailtrap->emails()->send($email);
     }
 
     public function __toString(): string
