@@ -1,11 +1,12 @@
 <?php
-
 namespace App\Providers;
 
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\Transport\MailtrapTransport;
 use App\Services\GeoService;
 use App\Models\LandPriceHistory;
 use App\Models\User;
@@ -16,7 +17,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-         $this->app->singleton(GeoService::class);
+        $this->app->singleton(GeoService::class);
     }
 
     public function boot(): void
@@ -35,6 +36,13 @@ class AppServiceProvider extends ServiceProvider
             return new JwtUserProvider(
                 $app['hash'],
                 $config['model'] ?? User::class
+            );
+        });
+
+        // Mailtrap API transport
+        Mail::extend('mailtrap', function (array $config) {
+            return new MailtrapTransport(
+                apiKey: $config['api_key'] ?? config('services.mailtrap.api_key'),
             );
         });
     }
