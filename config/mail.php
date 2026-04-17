@@ -115,6 +115,7 @@ return [
     
     'to' => [
         'address' => env('SUPPORT_ADDRESS', 'support@reu.ng'),
+        'name' => env('SUPPORT_NAME', 'REU.ng Support'),
     ],
 
 ];
