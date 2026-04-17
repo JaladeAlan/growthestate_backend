@@ -19,7 +19,6 @@ php artisan migrate --force
 
 # ── Mailer test (remove after one deploy) ────────────────────────────────────
 php artisan mail:test --to=ayodejialalade29@gmail.com --mailer=mailtrap || true
-php artisan mail:test --to=jaladealan007@gmail.com --mailer=mailgun || true
-php artisan mail:test --to=info@reu.ng --mailer=postmark || true
+php artisan mail:test --to=supporters@reu.ng --mailer=postmark || true
 
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

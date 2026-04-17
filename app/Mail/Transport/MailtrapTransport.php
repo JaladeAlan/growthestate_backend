@@ -21,7 +21,7 @@ class MailtrapTransport extends AbstractTransport
 
         $mailtrap = new MailtrapClient(new Config($this->apiKey));
 
-        $mailtrap->emails()->send($email);
+        $mailtrap->sending()->emails()->send($email);
     }
 
     public function __toString(): string
