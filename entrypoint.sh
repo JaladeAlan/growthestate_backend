@@ -17,4 +17,11 @@ php artisan route:cache
 php artisan storage:link --quiet 2>/dev/null || true
 php artisan migrate --force
 
+# ── Mailer test (remove after one deploy) ────────────────────────────────────
+php artisan mail:test --to=alaladeayodeji1@gmail.com --mailer=resend
+php artisan mail:test --to=alaladeayodeji1@gmail.com --mailer=mailtrap
+php artisan mail:test --to=alaladeayodeji1@gmail.com --mailer=mailersend
+php artisan mail:test --to=alaladeayodeji1@gmail.com --mailer=mailgun
+php artisan mail:test --to=alaladeayodeji1@gmail.com --mailer=postmark
+
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
