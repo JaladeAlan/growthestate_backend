@@ -93,13 +93,16 @@ class TestMail extends Mailable
 {
     public function __construct(public readonly string $mailerName) {}
 
-    public function envelope(): Envelope
+   public function envelope(): Envelope
     {
         return new Envelope(
+            from: new \Illuminate\Mail\Mailables\Address(
+                config('mail.from.address'),
+                config('mail.from.name'),
+            ),
             subject: "[REU.ng] Test email via {$this->mailerName}",
         );
     }
-
     public function content(): Content
     {
         return new Content(
