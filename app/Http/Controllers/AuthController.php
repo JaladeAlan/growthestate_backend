@@ -329,7 +329,6 @@ class AuthController extends Controller
                     'regex:/[A-Z]/', 'regex:/[a-z]/',
                     'regex:/[0-9]/', 'regex:/[@$!%*?&#]/',
                 ],
-                'reset_code' => 'required|string|size:6',
             ], [
                 'password.min'       => 'The password must be at least 8 characters long.',
                 'password.regex'     => 'The password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
@@ -344,32 +343,28 @@ class AuthController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($request) {
-                $user = User::where('email', $request->email)
-                    ->lockForUpdate()
-                    ->first();
+           DB::transaction(function () use ($request) {
+            $user = User::where('email', $request->email)
+                ->lockForUpdate()
+                ->first();
 
-                if (! $user) {
-                    abort(400, 'Invalid request.');
-                }
+            if (! $user) {
+                abort(400, 'Invalid request.');
+            }
 
-                if (
-                    ! $user->password_reset_code ||
-                    ! $user->password_reset_code_expires_at ||
-                    $user->password_reset_code_expires_at->isPast()
-                ) {
-                    abort(400, 'Reset code has expired. Please request a new one.');
-                }
+            if (
+                ! $user->password_reset_verified ||
+                ! $user->password_reset_code_expires_at ||
+                $user->password_reset_code_expires_at->isPast()
+            ) {
+                abort(400, 'Reset code has expired or was not verified. Please request a new one.');
+            }
 
-                if (! Hash::check((string) $request->reset_code, $user->password_reset_code)) {
-                    abort(400, 'Invalid reset code.');
-                }
-
-                $user->password                       = Hash::make($request->password);
-                $user->password_reset_code            = null;
-                $user->password_reset_code_expires_at = null;
-                $user->password_reset_verified        = false;
-                $user->save();
+            $user->password                       = Hash::make($request->password);
+            $user->password_reset_code            = null;
+            $user->password_reset_code_expires_at = null;
+            $user->password_reset_verified        = false;
+            $user->save();
             });
         } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
             throw $e;
