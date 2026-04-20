@@ -32,15 +32,9 @@ class TransactionPinResetMail extends Mailable
                     ->with([
                         'userName' => $this->user->name,
                         'code' => $this->code,
-                       'logoUrl'          => $this->embedLogo(),
+                      'logoUrl'          => asset('images/reu-logo.png'),
                     ]);
     }
 
-    private function embedLogo(): string
-        {
-            // Embeds the image directly into the email as base64
-            $path = public_path('images/reu-logo.png');
-            $data = base64_encode(file_get_contents($path));
-            return 'data:image/png;base64,' . $data;
-        }
+   
 }

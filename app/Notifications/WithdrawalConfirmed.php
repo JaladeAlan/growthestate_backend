@@ -87,7 +87,7 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
 
         return (new MailMessage)
             ->subject('Withdrawal Confirmed – ₦' . number_format($this->withdrawalData['amount_kobo'] / 100, 2))
-            ->view('emails.withdrawal_confirmed', ['logoUrl' => $this->embedLogo(), 'withdrawal' => $data]);
+            ->view('emails.withdrawal_confirmed', ['logoUrl' => asset('images/reu-logo.png'), 'withdrawal' => $data]);
     }
 
     public function failed(\Throwable $exception): void
@@ -96,11 +96,5 @@ class WithdrawalConfirmed extends Notification implements ShouldQueue
             'reference' => $this->withdrawalData['reference'],
             'error'     => $exception->getMessage(),
         ]);
-    }
-
-    private function embedLogo(): string
-    {
-        $path = public_path('images/reu-logo.png');
-        return 'data:image/png;base64,' . base64_encode(file_get_contents($path));
-    }
+    }  
 }

@@ -62,7 +62,7 @@ class DepositConfirmed extends Notification implements ShouldQueue
         return (new MailMessage)
             ->subject('Deposit Confirmed – ₦' . number_format($this->amountKobo / 100, 2))
             ->view('emails.deposit_confirmed', [
-                'logoUrl' => $this->embedLogo(),
+                'logoUrl'    => asset('images/reu-logo.png'),
                 'notifiable' => $notifiable,
                 'amountKobo' => $this->amountKobo,
                 'reference'  => $this->reference,
@@ -76,12 +76,5 @@ class DepositConfirmed extends Notification implements ShouldQueue
             'reference' => $this->reference,
             'error'     => $exception->getMessage(),
         ]);
-    }
-
-
-    private function embedLogo(): string
-    {
-        $path = public_path('images/reu-logo.png');
-        return 'data:image/png;base64,' . base64_encode(file_get_contents($path));
-    }
+    }  
 }
