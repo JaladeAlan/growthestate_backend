@@ -33,9 +33,24 @@ use Illuminate\Support\Facades\Queue;
 // =============================================================================
 
 Route::get('/health', function () {
+    $redis = false;
+    $queue = null;
+    $redisError = null;
+
+    try {
+        \Illuminate\Support\Facades\Redis::ping();
+        $redis = true;
+        $queue = Queue::size('default');
+    } catch (\Exception $e) {
+        $redisError = $e->getMessage();
+    }
+
     return response()->json([
-        'status'      => 'ok',
-        'queue_size'  => Queue::size('default'),
+        'status'      => $redis ? 'ok' : 'degraded',
+        'redis'       => $redis,
+        'redis_error' => $redisError,
+        'queue_size'  => $queue,
+        'cache_driver'=> config('cache.default'),
         'timestamp'   => now(),
     ]);
 });
