@@ -93,7 +93,7 @@ class SaleConfirmed extends Notification implements ShouldQueue
 
         return (new MailMessage)
             ->subject("Sale Confirmed – {$this->transactionData['units']} unit(s) of " . ($this->transactionData['land_title'] ?? 'your property'))
-            ->view('emails.sale_confirmed', ['transaction' => $data]);
+            ->view('emails.sale_confirmed', ['logoUrl' => $this->embedLogo(), 'transaction' => $data]);
     }
 
     public function failed(\Throwable $exception): void
@@ -102,5 +102,11 @@ class SaleConfirmed extends Notification implements ShouldQueue
             'reference' => $this->transactionData['reference'],
             'error'     => $exception->getMessage(),
         ]);
+    }
+
+    private function embedLogo(): string
+    {
+        $path = public_path('images/reu-logo.png');
+        return 'data:image/png;base64,' . base64_encode(file_get_contents($path));
     }
 }

@@ -13,24 +13,13 @@
                 <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;">
 
                     {{-- Logo --}}
-                    <tr>
-                        <td align="center" style="padding-bottom:32px;">
-                            <table cellpadding="0" cellspacing="0">
-                                <tr>
-                                    <td style="background:linear-gradient(135deg,#C8873A,#E8A850);border-radius:10px;width:36px;height:36px;text-align:center;vertical-align:middle;">
-                                        <span style="color:#0D1F1A;font-weight:900;font-size:16px;line-height:36px;">
-                                            {{ strtoupper(substr(env('APP_NAME', 'R'), 0, 1)) }}
-                                        </span>
-                                    </td>
-                                    <td style="padding-left:10px;vertical-align:middle;">
-                                        <span style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">
-                                            {{ env('APP_NAME', 'REU.ng') }}
-                                        </span>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
+                   <img
+                        src="{{ $logoUrl }}"
+                        alt="{{ config('app.name', 'REU.ng') }}"
+                        width="120"
+                        style="display:block;height:auto;max-width:120px;"
+                    />
+
 
                     {{-- Card --}}
                     <tr>
