@@ -50,6 +50,8 @@ Route::get('/health', function () {
         'redis'       => $redis,
         'redis_error' => $redisError,
         'queue_size'  => $queue,
+        'client_ip'    => request()->ip(),
+        'real_ip'      => request()->header('X-Forwarded-For'),
         'cache_driver'=> config('cache.default'),
         'timestamp'   => now(),
     ]);
