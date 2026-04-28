@@ -63,17 +63,13 @@ return [
     'base_url'      => env('MONNIFY_BASE_URL', 'https://sandbox.monnify.com'),
 ],
 
-    'opay' => [
-        'secret_key' => env('OPAY_SECRET_KEY'),
-        'public_key' => env('OPAY_PUBLIC_KEY'),
+       'opay' => [
+        'public_key'  => env('OPAY_PUBLIC_KEY'),
+        'secret_key'  => env('OPAY_SECRET_KEY'),
         'merchant_id' => env('OPAY_MERCHANT_ID'),
-        'base_url'    => env('OPAY_BASE_URL', 'https://testapi.opaycheckout.com'),
-
-        /*
-        * Sandbox : https://sandboxapi.opayweb.com
-        * Live    : https://cashierapi.opayweb.com
-        */
-        'base_url'    => env('OPAY_BASE_URL', 'https://sandboxapi.opayweb.com'),
+        'sandbox'     => env('OPAY_SANDBOX', true),   // false in production
+        'country'     => env('OPAY_COUNTRY', 'NG'),   // NG for Nigeria
+        'currency'    => env('OPAY_CURRENCY', 'NGN'),
     ],
     
     'openai' => ['key' => env('OPENAI_API_KEY')],
