@@ -22,25 +22,16 @@ class OpayWebhookController extends Controller
      */
     public function handle(Request $request)
     {
-        $rawBody   = $request->getContent();
-        $signature = $request->header('Signature', '');
-        $timestamp = $request->header('RequestTimestamp', '');
+        $rawBody = $request->getContent();
+        $decoded = json_decode($rawBody, true);
 
-           // ── TEMPORARY DEBUG — remove after fixing ────────────────────────────
-        Log::info('OPay webhook RAW', [
-            'ip'        => $request->ip(),
-            'signature' => $signature,
-            'timestamp' => $timestamp,
-            'body'      => $rawBody,
-            'all_headers' => $request->headers->all(),
-        ]);
-        
-        if (! OpayService::verifyWebhookSignature($rawBody, $signature, $timestamp)) {
+        if (! OpayService::verifyWebhookSignature($rawBody, '')) {
             Log::warning('OPay webhook: invalid signature', ['ip' => $request->ip()]);
             return response()->json(['message' => 'Invalid signature'], 401);
         }
 
-        $payload   = json_decode($rawBody, true);
+        // Data is nested under 'payload'
+        $payload   = $decoded['payload'] ?? [];
         $reference = $payload['reference'] ?? null;
         $status    = strtoupper($payload['status'] ?? '');
 
@@ -55,12 +46,10 @@ class OpayWebhookController extends Controller
             ->first();
 
         if (! $deposit) {
-            // Acknowledge to stop retries — not our reference
             Log::warning('OPay webhook: deposit not found', ['reference' => $reference]);
             return response()->json(['message' => 'OK'], 200);
         }
 
-        // Idempotency guard
         if ($deposit->processed_at !== null) {
             return response()->json(['message' => 'Already processed'], 200);
         }
