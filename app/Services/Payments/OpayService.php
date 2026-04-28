@@ -116,24 +116,42 @@ class OpayService
         $signature = $decoded['sha512'] ?? null;
         $payload   = $decoded['payload'] ?? [];
 
-        if (!$signature || !$payload) {
+        if (!$signature || empty($payload)) {
             Log::warning('OPay missing signature or payload');
             return false;
         }
 
-        // IMPORTANT: OPay uses SHA3-512 over payload only
-        $computed = hash_hmac(
-            'sha3-512',
-            json_encode($payload, JSON_UNESCAPED_SLASHES),
-            config('services.opay.secret_key')
+        $amount        = $payload['amount']        ?? '';
+        $currency      = $payload['currency']      ?? '';
+        $reference     = $payload['reference']     ?? '';
+        $refunded      = $payload['refunded']      ?? false;
+        $status        = $payload['status']        ?? '';
+        $timestamp     = $payload['timestamp']     ?? '';
+        $token         = $payload['token']         ?? '';
+        $transactionId = $payload['transactionId'] ?? '';
+
+        // OPay's required format: PascalCase keys, specific order, refunded as "t"/"f"
+        $authJson = sprintf(
+            '{Amount:"%s",Currency:"%s",Reference:"%s",Refunded:%s,Status:"%s",Timestamp:"%s",Token:"%s",TransactionID:"%s"}',
+            $amount,
+            $currency,
+            $reference,
+            $refunded ? 't' : 'f',
+            $status,
+            $timestamp,
+            $token,
+            $transactionId
         );
+
+        $computed = hash_hmac('sha3-512', $authJson, config('services.opay.secret_key'));
 
         $isValid = hash_equals(strtolower($computed), strtolower($signature));
 
         Log::info('OPay webhook verification', [
-            'valid'    => $isValid,
-            'received' => $signature,
-            'computed' => $computed,
+            'valid'      => $isValid,
+            'auth_input' => $authJson,
+            'received'   => $signature,
+            'computed'   => $computed,
         ]);
 
         return $isValid;
