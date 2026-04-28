@@ -105,7 +105,7 @@ Route::get('/verify/{certNumber}', [CertificateController::class, 'verify'])
 // ── Payment webhooks (server-to-server, no auth, no CSRF) ────────────────────
 Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
-Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']);
+Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle']) ->name('opay.webhook');
 
 // ── OPay cashier redirects (no auth — OPay redirects the browser here) ───────
 Route::get('/deposit/opay/return', [OpayWebhookController::class, 'returnUrl'])->name('opay.return');

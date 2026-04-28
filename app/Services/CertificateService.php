@@ -479,7 +479,7 @@ body {
 
     <div class="header">
         <div class="header-bar"></div>
-        <div class="brand">SproutVest</div>
+        <div class="brand">Reu.ng</div>
         <div class="cert-title">Certificate of Investment</div>
         <div class="cert-subtitle">Fractional Land Investment &nbsp;&middot;&nbsp; Verified Digital Certificate</div>
     </div>
@@ -552,7 +552,7 @@ body {
         <div class="footer">
             <div class="brand-footer">SproutVest GSE Ltd</div>
             <p>This certificate is digitally issued and verifiable at the address above.</p>
-            <p>info@sproutvest.com</p>
+            <p>info@reu.ng</p>
         </div>
 
     </div>

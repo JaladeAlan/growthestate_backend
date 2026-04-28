@@ -40,7 +40,7 @@
                                 Verify Your Email
                             </h1>
                             <p style="margin:0 0 28px;color:rgba(255,255,255,0.45);font-size:14px;text-align:center;line-height:1.6;">
-                                Welcome to {{ env('APP_NAME', 'Sproutvest') }}, {{ $name }}! Use the code below to verify your email address and activate your account.
+                                Welcome to {{ env('APP_NAME', 'Reu.ng') }}, {{ $name }}! Use the code below to verify your email address and activate your account.
                             </p>
 
                             {{-- Code block --}}

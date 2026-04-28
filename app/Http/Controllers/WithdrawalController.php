@@ -512,7 +512,7 @@ class WithdrawalController extends Controller
                 'amount'    => $amountKobo,
                 'recipient' => $recipientCode,
                 'reference' => $referenceCode,
-                'reason'    => 'SproutVest withdrawal',
+                'reason'    => 'Reu.ng withdrawal',
             ]);
 
         if (! $res->successful()) {

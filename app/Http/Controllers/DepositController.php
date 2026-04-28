@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Cache;
 
 class DepositController extends Controller
 {
-    // Supported gateways — add new ones here.
     private const GATEWAYS = ['monnify', 'paystack', 'opay'];
 
     public function initiateDeposit(Request $request)
@@ -25,7 +24,6 @@ class DepositController extends Controller
             'gateway' => 'required|in:' . implode(',', self::GATEWAYS),
         ]);
 
-        // ── Create pending deposit record ──────────────────────────────────────
         try {
             $deposit = DepositService::createDepositKobo(
                 $user,
@@ -45,7 +43,6 @@ class DepositController extends Controller
 
         $callbackUrl = config('app.frontend_url') . "/wallet?reference={$deposit->reference}";
 
-        // ── Initialize with the chosen gateway ────────────────────────────────
         try {
             $paymentUrl = match ($deposit->gateway) {
 
@@ -70,42 +67,45 @@ class DepositController extends Controller
                     return $res['data']['authorization_url'] ?? null;
                 })(),
 
-                // 'opay' => (function () use ($user, $deposit, $callbackUrl) {
-                //     $res = OpayService::initialize(
-                //         $user->email,
-                //         $deposit->reference,
-                //         $deposit->total_kobo,
-                //         $callbackUrl,
-                //         $user->name
-                //     );
-                //     return $res['data']['cashierUrl'] ?? null;
-                // })(),
+                'opay' => (function () use ($user, $deposit, $callbackUrl) {
+                    $res = OpayService::initialize(
+                        $user->email,
+                        $deposit->reference,
+                        $deposit->total_kobo,
+                        $callbackUrl,
+                        $user->name
+                    );
+                    return $res['data']['cashierUrl'] ?? null;
+                })(),
 
-                default => null,
+                // No default — validation already guards against unknown gateways.
             };
+
+        } catch (\UnhandledMatchError $e) {
+            $deposit->delete();
+            Log::critical('Unsupported gateway slipped past validation into match block', [
+                'gateway' => $deposit->gateway,
+            ]);
+            return response()->json(['error' => 'Unsupported payment gateway.'], 500);
 
         } catch (\Exception $e) {
             $deposit->delete();
-
             Log::error('Gateway initialization failed', [
                 'user_id'   => $user->id,
                 'reference' => $deposit->reference,
                 'gateway'   => $deposit->gateway,
                 'error'     => $e->getMessage(),
             ]);
-
             return response()->json(['error' => 'Payment gateway error. Please try again.'], 502);
         }
 
         if (! $paymentUrl) {
             $deposit->delete();
-
             Log::warning('Gateway returned no payment URL', [
                 'user_id'   => $user->id,
                 'reference' => $deposit->reference,
                 'gateway'   => $deposit->gateway,
             ]);
-
             return response()->json(['error' => 'Payment initialization failed.'], 500);
         }
 
@@ -132,29 +132,8 @@ class DepositController extends Controller
             ->first();
 
         if (! $deposit) {
-            return response()->json(['status' => 'not_found'], 404);
+            return response()->json(['error' => 'Deposit not found.'], 404);
         }
-
-        // // For OPay, actively poll the gateway if still pending
-        // if ($deposit->gateway === 'opay' && $deposit->status === 'pending') {
-        //     try {
-        //         $result      = OpayService::verify($reference);
-        //         $orderStatus = strtoupper($result['data']['status'] ?? '');
-
-        //         if ($orderStatus === 'SUCCESS' && $deposit->processed_at === null) {
-        //             // Webhook may not have fired yet — fire the same handler inline
-        //             app(OpayWebhookController::class)
-        //                 ->processVerifiedDeposit($deposit);
-        //             $deposit->refresh();
-        //         }
-        //     } catch (\Exception $e) {
-        //         Log::warning('OPay active verify failed', [
-        //             'reference' => $reference,
-        //             'error'     => $e->getMessage(),
-        //         ]);
-        //         // Non-fatal: return whatever status is in the DB
-        //     }
-        // }
 
         return response()->json([
             'reference' => $deposit->reference,
@@ -196,7 +175,6 @@ class DepositController extends Controller
                 'bank_code'      => $request->bank_code,
                 'error'          => $e->getMessage(),
             ]);
-
             return response()->json(['error' => 'Could not resolve account. Please try again.'], 502);
         }
 

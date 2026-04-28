@@ -7,48 +7,60 @@ use Illuminate\Support\Facades\Log;
 class OpayService
 {
     private const ENDPOINT_CREATE = '/api/v1/international/cashier/create';
-    private const ENDPOINT_STATUS = '/api/v1/international/cashier/query';
+    private const ENDPOINT_STATUS = '/api/v1/international/cashier/status';
 
     public static function initialize(
         string $email,
         string $reference,
-        int $amountKobo,
+        int $amountKobo,        // Receives kobo, converts to naira internally
         string $returnUrl,
         string $name = ''
     ): array {
-        $amountNaira = (int) ($amountKobo / 100);
+        // $amountNaira = (int) ($amountKobo / 100);
 
         $payload = [
-            "country"   => "NG",
-            "reference" => $reference,
-            "amount"    => [
-                "total"    => $amountNaira,
-                "currency" => "NGN",
+            'country'   => 'NG',
+            'reference' => $reference,
+            'amount'    => [
+                'total'    => $amountKobo,
+                'currency' => 'NGN',
             ],
-            "returnUrl"   => $returnUrl,
-            "cancelUrl"   => $returnUrl,
-            "callbackUrl" => route('opay.webhook'),
-            "expireAt"    => 30,
-            "userInfo" => [
-                "userName"  => $name ?: $email,
-                "userEmail" => $email,
+            'returnUrl'   => $returnUrl,
+            'cancelUrl'   => $returnUrl,
+            'callbackUrl' => route('opay.webhook'),
+            'expireAt'    => 30,
+            'userInfo'    => [
+                'userName'  => $name ?: $email,
+                'userEmail' => $email,
             ],
-            "product" => [
-                "name"        => "Wallet Deposit",
-                "description" => "Sproutvest wallet top-up",
+            'product' => [
+                'name'        => 'Wallet Deposit',
+                'description' => 'REU.ng wallet top-up',
             ],
         ];
 
-        $body      = json_encode($payload, JSON_UNESCAPED_SLASHES);
-        $signature = hash_hmac('sha512', $body, config('services.opay.secret_key'));
-        $publicKey = config('services.opay.public_key');
-        $url       = rtrim(config('services.opay.base_url', 'https://testapi.opaycheckout.com'), '/') . self::ENDPOINT_CREATE;
+        return self::post(self::ENDPOINT_CREATE, $payload);
+    }
 
-        Log::info('OPay create request', [
-            'url'         => $url,
-            'body'        => $body,
-            'signature'   => $signature,
-            'merchant_id' => config('services.opay.merchant_id'),
+    public static function status(string $reference): array
+    {
+        $payload = [
+            'country'   => 'NG',
+            'reference' => $reference,
+        ];
+
+        return self::post(self::ENDPOINT_STATUS, $payload);
+    }
+
+    private static function post(string $endpoint, array $payload): array
+    {
+        $body    = json_encode($payload, JSON_UNESCAPED_SLASHES);
+        $baseUrl = rtrim(config('services.opay.base_url', 'https://testapi.opaycheckout.com'), '/');
+        $url     = $baseUrl . $endpoint;
+
+        Log::info('OPay API request', [
+            'url'  => $url,
+            'body' => $body,
         ]);
 
         $ch = curl_init($url);
@@ -59,9 +71,8 @@ class OpayService
             CURLOPT_TIMEOUT        => 20,
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
-                'Authorization: Bearer ' . $publicKey,  // ← public key, not HMAC
-                'MerchantId: '          . config('services.opay.merchant_id'),
-                'Signature: '           . $signature,   // ← HMAC goes here
+                'Authorization: Bearer ' . config('services.opay.public_key'),
+                'MerchantId: '           . config('services.opay.merchant_id'),
             ],
         ]);
 
@@ -71,43 +82,39 @@ class OpayService
         curl_close($ch);
 
         if ($curlError) {
-            Log::error("OPay create cURL error", ['error' => $curlError]);
-            throw new \RuntimeException("OPay create network error: {$curlError}");
+            Log::error('OPay cURL error', ['endpoint' => $endpoint, 'error' => $curlError]);
+            throw new \RuntimeException("OPay network error: {$curlError}");
         }
 
-        Log::info('OPay create response', [
-            'status' => $httpStatus,
-            'body'   => $responseBody,
-        ]);
+        Log::info('OPay API response', ['status' => $httpStatus, 'body' => $responseBody]);
 
         $decoded = json_decode($responseBody, true);
+
         if (json_last_error() !== JSON_ERROR_NONE) {
-            Log::error("OPay create invalid JSON", ['body' => $responseBody]);
-            throw new \RuntimeException("OPay create returned non-JSON: {$responseBody}");
+            Log::error('OPay non-JSON response', ['body' => $responseBody]);
+            throw new \RuntimeException("OPay returned non-JSON: {$responseBody}");
         }
 
         if (($decoded['code'] ?? null) !== '00000') {
-            Log::error("OPay create failed", ['body' => $decoded]);
-            throw new \RuntimeException("OPay create failed: " . ($decoded['message'] ?? 'unknown error'));
+            Log::error('OPay request failed', ['endpoint' => $endpoint, 'response' => $decoded]);
+            throw new \RuntimeException('OPay error: ' . ($decoded['message'] ?? 'unknown'));
         }
-
-        Log::info("OPay create success", [
-            'code'        => $decoded['code'],
-            'cashier_url' => $decoded['data']['cashierUrl'] ?? null,
-            'order_no'    => $decoded['data']['orderNo'] ?? null,
-        ]);
 
         return $decoded;
     }
 
+    /**
+     * Webhook signature: OPay sends the HMAC of the raw request body.
+     * Always pass $request->getContent() — never the decoded array.
+     */
     public static function verifyWebhookSignature(string $rawBody, string $headerSignature): bool
     {
         $computed = hash_hmac('sha512', $rawBody, config('services.opay.secret_key'));
-        Log::info('OPay signature verification', [
-            'header_signature'   => $headerSignature,
-            'computed_signature' => $computed,
-            'match'              => hash_equals($computed, $headerSignature),
+
+        Log::info('OPay webhook signature check', [
+            'match' => hash_equals($computed, strtolower($headerSignature)),
         ]);
-        return hash_equals($computed, $headerSignature);
+
+        return hash_equals($computed, strtolower($headerSignature));
     }
 }

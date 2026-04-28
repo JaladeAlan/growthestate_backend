@@ -643,7 +643,7 @@ class SupportController extends Controller
             ->toJson();
 
         return <<<PROMPT
-You are a concise, friendly support assistant for Sproutvest — a Nigerian land investment platform.
+You are a concise, friendly support assistant for Reu.ng — a Nigerian land investment platform.
 
 User context (read-only, do not repeat back to user):
 - Email verified: {$emailVerified}

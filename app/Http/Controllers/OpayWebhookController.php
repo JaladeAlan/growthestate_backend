@@ -5,157 +5,108 @@ namespace App\Http\Controllers;
 use App\Models\Deposit;
 use App\Models\LedgerEntry;
 use App\Models\User;
+use App\Services\Payments\OpayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
-class OpayCheckoutController extends Controller
+class OpayWebhookController extends Controller
 {
-    private string $publicKey;
-    private string $secretKey;
-    private string $merchantId;
-    private string $baseUrl;
-    private string $country;
-    private string $currency;
-
-    private const FEE_PERCENT = 2;
-    private const FEE_CAP     = 300000; // ₦3,000 cap in kobo
-
-    public function __construct()
-    {
-        $this->publicKey  = config('services.opay.public_key');
-        $this->secretKey  = config('services.opay.secret_key');
-        $this->merchantId = config('services.opay.merchant_id');
-        $this->baseUrl    = config('services.opay.sandbox')
-            ? 'https://sandboxapi.opaycheckout.com'
-            : 'https://api.opaycheckout.com';
-        $this->country  = config('services.opay.country', 'NG');
-        $this->currency = config('services.opay.currency', 'NGN');
-    }
-
-    // -------------------------------------------------------------------------
-    // 1.  Initiate – create a Deposit record, redirect to OPay cashier
-    // -------------------------------------------------------------------------
-
     /**
-     * POST /deposit/opay
+     * POST /opay/webhook
      *
-     * Expected body (from the wallet frontend):
-     *   { "amount": 100000, "gateway": "opay" }   ← amount in kobo
+     * OPay sends:
+     *   Header: Signature   = HMAC-SHA512(timestamp + rawBody, secretKey)
+     *   Header: MerchantId
+     *   Header: RequestTimestamp
      */
-    public function initiate(Request $request)
+    public function handle(Request $request)
     {
-        $validated = $request->validate([
-            'amount' => 'required|integer|min:100000', // ₦1,000 minimum
-        ]);
+        $rawBody   = $request->getContent();
+        $signature = $request->header('Signature', '');
+        $timestamp = $request->header('RequestTimestamp', '');
 
-        /** @var User $user */
-        $user = $request->user();
+        if (! OpayService::verifyWebhookSignature($rawBody, $signature, $timestamp)) {
+            Log::warning('OPay webhook: invalid signature', ['ip' => $request->ip()]);
+            return response()->json(['message' => 'Invalid signature'], 401);
+        }
 
-        $amountKobo = (int) $validated['amount'];
-        $fee        = (int) min(round($amountKobo * self::FEE_PERCENT / 100), self::FEE_CAP);
-        $totalKobo  = $amountKobo + $fee;
-        $reference  = 'OPAY-' . strtoupper(Str::random(16));
+        $payload   = json_decode($rawBody, true);
+        $reference = $payload['reference'] ?? null;
+        $status    = strtoupper($payload['status'] ?? '');
 
-        // Persist the deposit before redirecting so the webhook always finds it
-        $deposit = Deposit::create([
-            'user_id'         => $user->id,
-            'reference'       => $reference,
-            'amount_kobo'     => $amountKobo,
-            'transaction_fee' => $fee,
-            'total_kobo'      => $totalKobo,
-            'status'          => Deposit::STATUS_PENDING,
-            'gateway'         => 'opay',
-        ]);
+        Log::info('OPay webhook received', ['reference' => $reference, 'status' => $status]);
 
-        $payload = [
-            'country'     => $this->country,
-            'reference'   => $reference,
-            'amount'      => [
-                'total'    => $totalKobo,
-                'currency' => $this->currency,
-            ],
-            'returnUrl'   => route('opay.return'),
-            'callbackUrl' => route('opay.webhook'),
-            'cancelUrl'   => route('opay.cancel'),
-            'expireAt'    => 30,
-            'userInfo'    => [
-                'userId'     => (string) $user->id,
-                'userName'   => $user->name,
-                'userEmail'  => $user->email,
-                'userMobile' => $user->phone ?? '',
-            ],
-            'productList' => [[
-                'productId'   => 'wallet-topup',
-                'name'        => 'Wallet Top-up',
-                'description' => 'Credit wallet balance',
-                'price'       => $totalKobo,
-                'quantity'    => 1,
-                'imageUrl'    => '',
-            ]],
-        ];
+        if (! $reference) {
+            return response()->json(['message' => 'Missing reference'], 400);
+        }
 
-        $response = $this->post('/api/v1/international/cashier/create', $payload);
+        $deposit = Deposit::where('reference', $reference)
+            ->where('gateway', 'opay')
+            ->first();
 
-        if (!$response || $response['code'] !== '00000') {
-            $message = $response['message'] ?? 'Failed to initiate OPay checkout.';
-            Log::error('OPay initiate failed', [
-                'user_id'   => $user->id,
+        if (! $deposit) {
+            // Acknowledge to stop retries — not our reference
+            Log::warning('OPay webhook: deposit not found', ['reference' => $reference]);
+            return response()->json(['message' => 'OK'], 200);
+        }
+
+        // Idempotency guard
+        if ($deposit->processed_at !== null) {
+            return response()->json(['message' => 'Already processed'], 200);
+        }
+
+        match ($status) {
+            'SUCCESS' => $this->handleSuccess($deposit, $payload),
+            'FAILED'  => $this->handleFailed($deposit, $payload),
+            default   => Log::info('OPay webhook: unhandled status', [
                 'reference' => $reference,
-                'response'  => $response,
-            ]);
+                'status'    => $status,
+            ]),
+        };
 
-            // Clean up the pending deposit so the reference doesn't orphan
-            $deposit->delete();
-
-            return response()->json(['message' => $message], 502);
-        }
-
-        $cashierUrl = $response['data']['cashierUrl'] ?? null;
-
-        if (!$cashierUrl) {
-            Log::error('OPay: cashierUrl missing in response', $response);
-            $deposit->delete();
-            return response()->json(['message' => 'Could not retrieve payment URL. Please try again.'], 502);
-        }
-
-        return response()->json(['payment_url' => $cashierUrl]);
+        return response()->json(['message' => 'OK'], 200);
     }
 
-    // -------------------------------------------------------------------------
-    // 2.  Return URL – customer lands here after the cashier
-    // -------------------------------------------------------------------------
-
     /**
-     * GET /deposit/opay/return?reference=xxx&status=SUCCESS|FAILED
+     * GET /deposit/opay/return
+     *
+     * OPay redirects the customer here after the cashier page.
+     * Always re-verify server-side — never trust query params alone.
      */
     public function returnUrl(Request $request)
     {
         $reference = $request->query('reference');
 
-        if (!$reference) {
-            return redirect()->route('home')->with('error', 'Invalid payment return.');
+        if (! $reference) {
+            return redirect(config('app.frontend_url') . '/wallet?status=error&message=invalid_return');
         }
 
-        // Always re-verify server-side
-        $verified  = $this->queryPaymentStatus($reference);
-        $payStatus = $verified['data']['status'] ?? 'FAILED';
-
-        if ($payStatus === 'SUCCESS') {
-            return redirect()->route('wallet')->with('success', 'Deposit successful! Your wallet has been credited.');
+        try {
+            $result    = OpayService::status($reference);
+            $payStatus = strtoupper($result['data']['status'] ?? 'FAILED');
+        } catch (\Exception $e) {
+            Log::error('OPay returnUrl status check failed', [
+                'reference' => $reference,
+                'error'     => $e->getMessage(),
+            ]);
+            // Non-fatal — let the webhook handle crediting; just redirect
+            $payStatus = 'PENDING';
         }
 
-        return redirect()->route('wallet')->with('error', 'Payment was not completed. Status: ' . $payStatus);
+        $frontendBase = config('app.frontend_url') . '/wallet?reference=' . $reference;
+
+        return match ($payStatus) {
+            'SUCCESS' => redirect($frontendBase . '&status=success'),
+            'PENDING' => redirect($frontendBase . '&status=pending'),
+            default   => redirect($frontendBase . '&status=failed'),
+        };
     }
-
-    // -------------------------------------------------------------------------
-    // 3.  Cancel URL
-    // -------------------------------------------------------------------------
 
     /**
      * GET /deposit/opay/cancel
+     *
+     * OPay redirects here if the customer cancels on the cashier page.
      */
     public function cancel(Request $request)
     {
@@ -164,144 +115,41 @@ class OpayCheckoutController extends Controller
         if ($reference) {
             Deposit::where('reference', $reference)
                 ->where('gateway', 'opay')
-                ->pending()
+                ->where('status', Deposit::STATUS_PENDING)
+                ->whereNull('processed_at')
                 ->update(['status' => Deposit::STATUS_FAILED]);
         }
 
-        return redirect()->route('wallet')->with('info', 'Payment was cancelled.');
-    }
-
-    // -------------------------------------------------------------------------
-    // 4.  Webhook – OPay POSTs payment updates here (no CSRF, no auth)
-    // -------------------------------------------------------------------------
-
-    /**
-     * POST /webhook/opay
-     */
-    public function webhook(Request $request)
-    {
-        $body      = $request->getContent();
-        $data      = json_decode($body, true);
-        $signature = $data['sha512'] ?? '';
-
-        if (!$this->verifyWebhookSignature($data['payload'] ?? [], $signature)) {
-            Log::warning('OPay webhook: invalid signature', ['ip' => $request->ip()]);
-            return response()->json(['message' => 'Invalid signature'], 401);
-        }
-
-        $payload   = $data['payload'];
-        $reference = $payload['reference'] ?? null;
-        $status    = strtoupper($payload['status'] ?? '');
-
-        Log::info('OPay webhook received', ['reference' => $reference, 'status' => $status]);
-
-        if (!$reference) {
-            return response()->json(['message' => 'Missing reference'], 400);
-        }
-
-        $deposit = Deposit::where('reference', $reference)
-            ->where('gateway', 'opay')
-            ->first();
-
-        if (!$deposit) {
-            Log::warning('OPay webhook: deposit not found', ['reference' => $reference]);
-            // Acknowledge to stop retries — not our reference
-            return response()->json(['message' => 'OK'], 200);
-        }
-
-        // Idempotency guard (mirrors Paystack/Monnify pattern)
-        if ($deposit->processed_at !== null) {
-            return response()->json(['message' => 'Already processed'], 200);
-        }
-
-        match ($status) {
-            'SUCCESS' => $this->handleSuccess($deposit, $payload),
-            'FAILED'  => $this->handleFailed($deposit, $payload),
-            default   => Log::info('OPay webhook: unhandled status', ['status' => $status]),
-        };
-
-        return response()->json(['message' => 'OK'], 200);
-    }
-
-    // -------------------------------------------------------------------------
-    // 5.  Status query – optional admin/debug route
-    // -------------------------------------------------------------------------
-
-    public function status(string $reference)
-    {
-        $result = $this->queryPaymentStatus($reference);
-
-        if (!$result) {
-            return response()->json(['error' => 'Failed to query status'], 502);
-        }
-
-        return response()->json($result);
+        return redirect(
+            config('app.frontend_url') . '/wallet?status=cancelled'
+            . ($reference ? '&reference=' . $reference : '')
+        );
     }
 
     // =========================================================================
-    // Private helpers
+    // Private handlers
     // =========================================================================
 
-    private function post(string $path, array $payload): ?array
-    {
-        try {
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $this->publicKey,
-                'MerchantId'    => $this->merchantId,
-                'Content-Type'  => 'application/json',
-            ])->post($this->baseUrl . $path, $payload);
-
-            return $response->json();
-        } catch (\Throwable $e) {
-            Log::error('OPay API request failed', ['path' => $path, 'error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    private function queryPaymentStatus(string $reference): ?array
-    {
-        return $this->post('/api/v1/international/cashier/status/query', [
-            'country'   => $this->country,
-            'reference' => $reference,
-        ]);
-    }
-
-    private function verifyWebhookSignature(array $payload, string $receivedSignature): bool
-    {
-        if (empty($receivedSignature)) {
-            return false;
-        }
-
-        $jsonPayload       = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $expectedSignature = hash_hmac('sha512', $jsonPayload, $this->secretKey);
-
-        return hash_equals($expectedSignature, strtolower($receivedSignature));
-    }
-
-    /**
-     * Credit the user's wallet — mirrors PaystackWebhookController::handleChargeSuccess()
-     */
     private function handleSuccess(Deposit $deposit, array $payload): void
     {
         DB::transaction(function () use ($deposit, $payload) {
 
-            // Lock rows exactly like Paystack/Monnify do
             $lockedDeposit = Deposit::where('id', $deposit->id)
                 ->lockForUpdate()
                 ->first();
 
+            // Double-check inside the lock
             if ($lockedDeposit->processed_at !== null) {
-                return; // Lost the race — already handled
+                return;
             }
 
             $user = User::lockForUpdate()->find($lockedDeposit->user_id);
 
-            if (!$user) {
+            if (! $user) {
                 Log::error('OPay webhook: user not found', ['user_id' => $lockedDeposit->user_id]);
                 return;
             }
 
-            // Credit principal only (fee was already charged on top via total_kobo)
             $user->increment('balance_kobo', $lockedDeposit->amount_kobo);
             $balanceAfter = $user->fresh()->balance_kobo;
 
@@ -314,7 +162,7 @@ class OpayCheckoutController extends Controller
                 'reference'     => $lockedDeposit->reference,
             ]);
 
-            // Ledger: fee audit (no balance change — mirrors Paystack handler)
+            // Ledger: fee audit (balance unchanged — fee was charged on top via total_kobo)
             LedgerEntry::create([
                 'uid'           => $user->id,
                 'type'          => 'transaction_fee',
@@ -349,16 +197,13 @@ class OpayCheckoutController extends Controller
         });
     }
 
-    /**
-     * Mark the deposit failed — wallet is untouched.
-     */
     private function handleFailed(Deposit $deposit, array $payload): void
     {
         $deposit->update(['status' => Deposit::STATUS_FAILED]);
 
         Log::info('OPay deposit failed', [
             'reference' => $deposit->reference,
-            'reason'    => $payload['displayedFailure'] ?? 'unknown',
+            'reason'    => $payload['reason'] ?? $payload['displayedFailure'] ?? 'unknown',
         ]);
     }
 }
