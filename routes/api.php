@@ -31,6 +31,11 @@ use Illuminate\Support\Facades\Queue;
 // =============================================================================
 // PUBLIC — no authentication required
 // =============================================================================
+Route::get('/debug/last-log', function () {
+    $path = storage_path('logs/laravel.log');
+    $lines = array_slice(file($path), -100); // last 100 lines
+    return response(implode('', $lines))->header('Content-Type', 'text/plain');
+});
 
 Route::get('/health', function () {
     $redis = false;
