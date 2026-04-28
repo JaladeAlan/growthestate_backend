@@ -47,19 +47,20 @@ class OpayService
             'reference' => $reference,
         ];
 
-        return self::post(self::ENDPOINT_STATUS, $payload);
+        return self::post(self::ENDPOINT_STATUS, $payload, true); 
     }
 
-    private static function post(string $endpoint, array $payload): array
+    private static function post(string $endpoint, array $payload, bool $usePrivateKey = false): array
     {
         $body    = json_encode($payload, JSON_UNESCAPED_SLASHES);
         $baseUrl = rtrim(config('services.opay.base_url', 'https://testapi.opaycheckout.com'), '/');
         $url     = $baseUrl . $endpoint;
 
-        Log::info('OPay API request', [
-            'url'  => $url,
-            'body' => $body,
-        ]);
+        $apiKey = $usePrivateKey
+            ? config('services.opay.secret_key')   
+            : config('services.opay.public_key');  
+
+        Log::info('OPay API request', ['url' => $url, 'body' => $body]);
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -69,7 +70,7 @@ class OpayService
             CURLOPT_TIMEOUT        => 20,
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
-                'Authorization: Bearer ' . config('services.opay.public_key'),
+                'Authorization: Bearer ' . $apiKey,
                 'MerchantId: ' . config('services.opay.merchant_id'),
             ],
         ]);
@@ -77,21 +78,14 @@ class OpayService
         $responseBody = curl_exec($ch);
         $httpStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError    = curl_error($ch);
-
         curl_close($ch);
 
         if ($curlError) {
-            Log::error('OPay cURL error', [
-                'endpoint' => $endpoint,
-                'error'    => $curlError
-            ]);
+            Log::error('OPay cURL error', ['endpoint' => $endpoint, 'error' => $curlError]);
             throw new \RuntimeException("OPay network error: {$curlError}");
         }
 
-        Log::info('OPay API response', [
-            'status' => $httpStatus,
-            'body'   => $responseBody
-        ]);
+        Log::info('OPay API response', ['status' => $httpStatus, 'body' => $responseBody]);
 
         $decoded = json_decode($responseBody, true);
 
@@ -105,7 +99,6 @@ class OpayService
 
         return $decoded;
     }
-
     /**
      * Formula: HMAC_SHA512(timestamp + rawBody, secretKey)
      */
