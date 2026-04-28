@@ -20,7 +20,7 @@ class OpayWebhookController extends Controller
         $signature = $request->header('Signature');
         $timestamp = $request->header('RequestTimestamp');
 
-        if (!OpayService::verifyWebhookSignature($rawBody, $signature, $timestamp)) {
+        if (!OpayService::verifyWebhookSignature($rawBody)) {
             Log::warning('OPay webhook: invalid signature', [
                 'ip' => $request->ip(),
             ]);

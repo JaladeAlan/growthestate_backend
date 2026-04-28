@@ -109,42 +109,31 @@ class OpayService
     /**
      * Formula: HMAC_SHA512(timestamp + rawBody, secretKey)
      */
-    public static function verifyWebhookSignature(
-        string $rawBody,
-        ?string $signature,
-        ?string $timestamp
-    ): bool {
-        if (!$signature || !$timestamp) {
-            Log::warning('OPay signature missing', [
-                'signature' => $signature,
-                'timestamp' => $timestamp,
-            ]);
+   public static function verifyWebhookSignature(string $rawBody): bool
+    {
+        $decoded = json_decode($rawBody, true);
+
+        $signature = $decoded['sha512'] ?? null;
+        $payload   = $decoded['payload'] ?? [];
+
+        if (!$signature || !$payload) {
+            Log::warning('OPay missing signature or payload');
             return false;
         }
 
-        // Prevent replay attacks (5 min window)
-        if (abs(time() - (int)$timestamp) > 300) {
-            Log::warning('OPay webhook expired timestamp', [
-                'timestamp' => $timestamp,
-            ]);
-            return false;
-        }
-
-        $dataToSign = $timestamp . $rawBody;
-
+        // IMPORTANT: OPay uses SHA3-512 over payload only
         $computed = hash_hmac(
-            'sha512',
-            $dataToSign,
+            'sha3-512',
+            json_encode($payload, JSON_UNESCAPED_SLASHES),
             config('services.opay.secret_key')
         );
 
         $isValid = hash_equals(strtolower($computed), strtolower($signature));
 
-        Log::info('OPay webhook signature check', [
-            'valid'     => $isValid,
-            'computed'  => $computed,
-            'received'  => $signature,
-            'timestamp' => $timestamp,
+        Log::info('OPay webhook verification', [
+            'valid'    => $isValid,
+            'received' => $signature,
+            'computed' => $computed,
         ]);
 
         return $isValid;
