@@ -82,39 +82,39 @@ class OpayWebhookController extends Controller
         }
 
         // ── Server-side verification (only for SUCCESS) ─────────────────
-        // try {
-        //     $verification   = OpayService::status($reference);
-        //     $verifiedStatus = strtoupper($verification['data']['status'] ?? 'FAILED');
-        //     $verifiedAmount = (int) ($verification['data']['amount'] ?? 0);
-        // } catch (\Exception $e) {
-        //     Log::error('OPay webhook: status check failed', [
-        //         'reference' => $reference,
-        //         'error'     => $e->getMessage(),
-        //     ]);
-        //     // Return 500 so OPay retries later
-        //     return response()->json(['message' => 'Verification error'], 500);
-        // }
+        try {
+            $verification   = OpayService::status($reference);
+            $verifiedStatus = strtoupper($verification['data']['status'] ?? 'FAILED');
+            $verifiedAmount = (int) ($verification['data']['amount'] ?? 0);
+        } catch (\Exception $e) {
+            Log::error('OPay webhook: status check failed', [
+                'reference' => $reference,
+                'error'     => $e->getMessage(),
+            ]);
+            // Return 500 so OPay retries later
+            return response()->json(['message' => 'Verification error'], 500);
+        }
 
-        // if ($verifiedStatus !== 'SUCCESS') {
-        //     Log::warning('OPay webhook: API verification did not confirm SUCCESS', [
-        //         'reference'       => $reference,
-        //         'verified_status' => $verifiedStatus,
-        //     ]);
-        //     $this->handleFailed($deposit);
-        //     return response()->json(['message' => 'OK'], 200);
-        // }
+        if ($verifiedStatus !== 'SUCCESS') {
+            Log::warning('OPay webhook: API verification did not confirm SUCCESS', [
+                'reference'       => $reference,
+                'verified_status' => $verifiedStatus,
+            ]);
+            $this->handleFailed($deposit);
+            return response()->json(['message' => 'OK'], 200);
+        }
 
-        // // ── Amount sanity check ─────────────────────────────────────────
-        // if ($verifiedAmount !== (int) $deposit->amount_kobo) {
-        //     Log::critical('OPay webhook: amount mismatch — possible fraud', [
-        //         'reference'       => $reference,
-        //         'expected_kobo'   => $deposit->amount_kobo,
-        //         'verified_kobo'   => $verifiedAmount,
-        //     ]);
-        //     // Do NOT credit; flag for manual review
-        //     $deposit->update(['status' => Deposit::STATUS_REVIEW]);
-        //     return response()->json(['message' => 'OK'], 200);
-        // }
+        // ── Amount sanity check ─────────────────────────────────────────
+        if ($verifiedAmount !== (int) $deposit->amount_kobo) {
+            Log::critical('OPay webhook: amount mismatch — possible fraud', [
+                'reference'       => $reference,
+                'expected_kobo'   => $deposit->amount_kobo,
+                'verified_kobo'   => $verifiedAmount,
+            ]);
+            // Do NOT credit; flag for manual review
+            $deposit->update(['status' => Deposit::STATUS_REVIEW]);
+            return response()->json(['message' => 'OK'], 200);
+        }
 
         // ── 10. Process the successful deposit ─────────────────────────────
         $this->handleSuccess($deposit);
