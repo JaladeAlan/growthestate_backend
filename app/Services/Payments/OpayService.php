@@ -12,12 +12,10 @@ class OpayService
     public static function initialize(
         string $email,
         string $reference,
-        int $amountKobo,        // Receives kobo, converts to naira internally
+        int $amountKobo,
         string $returnUrl,
         string $name = ''
     ): array {
-        // $amountNaira = (int) ($amountKobo / 100);
-
         $payload = [
             'country'   => 'NG',
             'reference' => $reference,
@@ -35,7 +33,7 @@ class OpayService
             ],
             'product' => [
                 'name'        => 'Wallet Deposit',
-                'description' => 'REU.ng wallet top-up',
+                'description' => 'Wallet top-up',
             ],
         ];
 
@@ -72,31 +70,36 @@ class OpayService
             CURLOPT_HTTPHEADER     => [
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . config('services.opay.public_key'),
-                'MerchantId: '           . config('services.opay.merchant_id'),
+                'MerchantId: ' . config('services.opay.merchant_id'),
             ],
         ]);
 
         $responseBody = curl_exec($ch);
         $httpStatus   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError    = curl_error($ch);
+
         curl_close($ch);
 
         if ($curlError) {
-            Log::error('OPay cURL error', ['endpoint' => $endpoint, 'error' => $curlError]);
+            Log::error('OPay cURL error', [
+                'endpoint' => $endpoint,
+                'error'    => $curlError
+            ]);
             throw new \RuntimeException("OPay network error: {$curlError}");
         }
 
-        Log::info('OPay API response', ['status' => $httpStatus, 'body' => $responseBody]);
+        Log::info('OPay API response', [
+            'status' => $httpStatus,
+            'body'   => $responseBody
+        ]);
 
         $decoded = json_decode($responseBody, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
-            Log::error('OPay non-JSON response', ['body' => $responseBody]);
             throw new \RuntimeException("OPay returned non-JSON: {$responseBody}");
         }
 
         if (($decoded['code'] ?? null) !== '00000') {
-            Log::error('OPay request failed', ['endpoint' => $endpoint, 'response' => $decoded]);
             throw new \RuntimeException('OPay error: ' . ($decoded['message'] ?? 'unknown'));
         }
 
@@ -104,50 +107,46 @@ class OpayService
     }
 
     /**
-     * Webhook signature: OPay sends the HMAC of the raw request body.
-     * Always pass $request->getContent() — never the decoded array.
+     * Formula: HMAC_SHA512(timestamp + rawBody, secretKey)
      */
-    // public static function verifyWebhookSignature(string $rawBody, string $headerSignature, string $timestamp = ''): bool
-    // {
-    //     $decoded = json_decode($rawBody, true);
-    //     $sha512  = $decoded['sha512'] ?? '';
-        
-    //     $payloadJson = json_encode($decoded['payload'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    //     $computed    = hash_hmac('sha512', $payloadJson, config('services.opay.secret_key'));
+    public static function verifyWebhookSignature(
+        string $rawBody,
+        ?string $signature,
+        ?string $timestamp
+    ): bool {
+        if (!$signature || !$timestamp) {
+            Log::warning('OPay signature missing', [
+                'signature' => $signature,
+                'timestamp' => $timestamp,
+            ]);
+            return false;
+        }
 
-    //     Log::info('OPay webhook signature check', [
-    //         'match'    => hash_equals($computed, strtolower($sha512)),
-    //         'computed' => $computed,
-    //         'received' => strtolower($sha512),
-    //     ]);
+        // Prevent replay attacks (5 min window)
+        if (abs(time() - (int)$timestamp) > 300) {
+            Log::warning('OPay webhook expired timestamp', [
+                'timestamp' => $timestamp,
+            ]);
+            return false;
+        }
 
-    //     return hash_equals($computed, strtolower($sha512));
-    // }
-    // OpayService::verifyWebhookSignature
-public static function verifyWebhookSignature(string $rawBody, string $headerSignature, string $timestamp = ''): bool
-{
-    $decoded  = json_decode($rawBody, true);
-    $sha512   = $decoded['sha512'] ?? '';
-    $payload  = $decoded['payload'] ?? [];
+        $dataToSign = $timestamp . $rawBody;
 
-    $attempts = [
-        'raw_body'                => hash_hmac('sha512', $rawBody,                                                                           config('services.opay.secret_key')),
-        'payload_unescaped'       => hash_hmac('sha512', json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),              config('services.opay.secret_key')),
-        'payload_escaped'         => hash_hmac('sha512', json_encode($payload),                                                              config('services.opay.secret_key')),
-        'raw_body_public'         => hash_hmac('sha512', $rawBody,                                                                           config('services.opay.public_key')),
-        'payload_unescaped_public' => hash_hmac('sha512', json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),             config('services.opay.public_key')),
-        'payload_escaped_public'  => hash_hmac('sha512', json_encode($payload),                                                              config('services.opay.public_key')),
-    ];
+        $computed = hash_hmac(
+            'sha512',
+            $dataToSign,
+            config('services.opay.secret_key')
+        );
 
-    $match = array_search(strtolower($sha512), array_map('strtolower', $attempts));
+        $isValid = hash_equals(strtolower($computed), strtolower($signature));
 
-    Log::info('OPay signature attempts', [
-        'received' => strtolower($sha512),
-        'match'    => $match ?: 'NONE',
-        'attempts' => $attempts,
-    ]);
+        Log::info('OPay webhook signature check', [
+            'valid'     => $isValid,
+            'computed'  => $computed,
+            'received'  => $signature,
+            'timestamp' => $timestamp,
+        ]);
 
-    // Temporarily bypass so deposit is credited while we identify the correct method
-    return true;
-}
+        return $isValid;
+    }
 }
