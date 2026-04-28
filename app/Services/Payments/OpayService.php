@@ -107,12 +107,16 @@ class OpayService
      * Webhook signature: OPay sends the HMAC of the raw request body.
      * Always pass $request->getContent() — never the decoded array.
      */
-    public static function verifyWebhookSignature(string $rawBody, string $headerSignature): bool
-    {
-        $computed = hash_hmac('sha512', $rawBody, config('services.opay.secret_key'));
+    public static function verifyWebhookSignature(
+        string $rawBody,
+        string $headerSignature,
+        string $timestamp = ''
+    ): bool {
+        $computed = hash_hmac('sha512', $timestamp . $rawBody, config('services.opay.secret_key'));
 
         Log::info('OPay webhook signature check', [
-            'match' => hash_equals($computed, strtolower($headerSignature)),
+            'match'     => hash_equals($computed, strtolower($headerSignature)),
+            'timestamp' => $timestamp,
         ]);
 
         return hash_equals($computed, strtolower($headerSignature));
