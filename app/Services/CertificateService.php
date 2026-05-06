@@ -39,7 +39,6 @@ class CertificateService
             ]);
 
             $this->safeGeneratePdf($existing->fresh());
-
             return $existing->fresh();
         }
 
@@ -71,14 +70,9 @@ class CertificateService
         ]);
 
         $this->safeGeneratePdf($certificate->fresh());
-
         return $certificate->fresh();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Verify a certificate by cert_number (public, no auth).
-    // Returns the Certificate model when active + signature matches, else null.
-    // ─────────────────────────────────────────────────────────────────────────
     public function verify(string $certNumber): ?Certificate
     {
         $cert = Certificate::where('cert_number', $certNumber)
@@ -121,16 +115,27 @@ class CertificateService
 
     public function renderPdfBytes(Certificate $certificate): string
     {
-        $dompdf = $this->makeDompdf();
-        $dompdf->loadHtml($this->buildHtml($certificate));
+          $fontCacheDir = storage_path('app/dompdf-fonts');
+        if (!is_dir($fontCacheDir)) {
+            mkdir($fontCacheDir, 0755, true);
+        }
+
+        $options = new Options();
+        $options->set('defaultFont', 'DejaVu Sans');
+        $options->set('isHtml5ParserEnabled', true);
+        $options->set('isCssFloatEnabled', true);
+        $options->set('isRemoteEnabled', false);
+        $options->set('fontDir', $fontCacheDir);
+        $options->set('fontCache', $fontCacheDir);     
+
+        $dompdf = new Dompdf($options);
         $dompdf->setPaper('A4', 'portrait');
+        $dompdf->loadHtml($this->buildHtml($certificate), 'UTF-8');
         $dompdf->render();
+
         return $dompdf->output();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PRIVATE
-    // ─────────────────────────────────────────────────────────────────────────
 
     private function safeGeneratePdf(Certificate $certificate): void
     {
@@ -145,13 +150,17 @@ class CertificateService
         }
     }
 
-    private function makeDompdf(): Dompdf
+    private function generatePdf(Certificate $certificate): string
     {
-        $options = new Options();
-        $options->set('defaultFont', 'DejaVu Sans');
-        $options->set('isRemoteEnabled', false);
-        $options->set('isHtml5ParserEnabled', true);
-        return new Dompdf($options);
+        $dir = storage_path('app/private/certificates');
+        if (! is_dir($dir)) mkdir($dir, 0755, true);
+
+        $filename = Str::slug($certificate->cert_number) . '.pdf';
+        $fullPath = "{$dir}/{$filename}";
+
+        file_put_contents($fullPath, $this->renderPdfBytes($certificate));
+
+        return "private/certificates/{$filename}";
     }
 
     private function generateCertNumber(int $landId): string
@@ -171,56 +180,78 @@ class CertificateService
         return strtoupper(hash_hmac('sha256', $raw, config('app.key')));
     }
 
-    private function generatePdf(Certificate $certificate): string
+    private function stampDataUri(): string
     {
-        $dir = storage_path('app/private/certificates');
-        if (! is_dir($dir)) mkdir($dir, 0755, true);
-
-        $filename = Str::slug($certificate->cert_number) . '.pdf';
-        $fullPath = "{$dir}/{$filename}";
-
-        file_put_contents($fullPath, $this->renderPdfBytes($certificate));
-
-        return "private/certificates/{$filename}";
+        $path = public_path('images/stamp.png');
+        if (! file_exists($path)) return '';
+        $mime = mime_content_type($path) ?: 'image/png';
+        return 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($path));
     }
 
     private function buildHtml(Certificate $c): string
     {
         $issueDate = $c->issued_at
-            ? \Carbon\Carbon::parse($c->issued_at)->format('d F Y')
-            : '—';
+            ? \Carbon\Carbon::parse($c->issued_at)->format('d F Y') : '—';
+        $issueDateShort = $c->issued_at
+            ? \Carbon\Carbon::parse($c->issued_at)->format('d M Y') : '—';
 
         $lastUpdated = (
             $c->last_updated_at &&
             \Carbon\Carbon::parse($c->last_updated_at)->ne(\Carbon\Carbon::parse($c->issued_at))
-        )
-            ? \Carbon\Carbon::parse($c->last_updated_at)->format('d F Y')
-            : null;
+        ) ? \Carbon\Carbon::parse($c->last_updated_at)->format('d F Y') : null;
 
         $total          = '&#8358;' . number_format((float) $c->total_invested, 2);
         $units          = number_format((int) $c->units);
-        $plotIdentifier = htmlspecialchars($c->plot_identifier      ?? '—', ENT_QUOTES, 'UTF-8');
+        $plotIdentifier = htmlspecialchars($c->plot_identifier       ?? '—', ENT_QUOTES, 'UTF-8');
         $tenure         = htmlspecialchars(ucfirst(strtolower($c->tenure ?? '—')), ENT_QUOTES, 'UTF-8');
-        $lga            = htmlspecialchars($c->lga                  ?? '—', ENT_QUOTES, 'UTF-8');
-        $state          = htmlspecialchars($c->state                ?? '—', ENT_QUOTES, 'UTF-8');
-        $title          = htmlspecialchars($c->property_title,    ENT_QUOTES, 'UTF-8');
-        $location       = htmlspecialchars($c->property_location, ENT_QUOTES, 'UTF-8');
-        $owner          = htmlspecialchars($c->owner_name,        ENT_QUOTES, 'UTF-8');
-        $certNumber     = htmlspecialchars($c->cert_number,        ENT_QUOTES, 'UTF-8');
-        $purchaseRef    = htmlspecialchars($c->purchase_reference,  ENT_QUOTES, 'UTF-8');
-        $signature      = htmlspecialchars($c->digital_signature,   ENT_QUOTES, 'UTF-8');
-        $verifyUrl      = htmlspecialchars(
-            config('app.frontend_url') . '/verify',
-            ENT_QUOTES, 'UTF-8'
-        );
+        $lga            = htmlspecialchars($c->lga                   ?? '—', ENT_QUOTES, 'UTF-8');
+        $state          = htmlspecialchars($c->state                 ?? '—', ENT_QUOTES, 'UTF-8');
+        $title          = htmlspecialchars($c->property_title,        ENT_QUOTES, 'UTF-8');
+        $location       = htmlspecialchars($c->property_location,     ENT_QUOTES, 'UTF-8');
+        $owner          = htmlspecialchars($c->owner_name,            ENT_QUOTES, 'UTF-8');
+        $ownerUpper     = htmlspecialchars(strtoupper($c->owner_name),ENT_QUOTES, 'UTF-8');
+        $certNumber     = htmlspecialchars($c->cert_number,           ENT_QUOTES, 'UTF-8');
+        $purchaseRef    = htmlspecialchars($c->purchase_reference,    ENT_QUOTES, 'UTF-8');
+        $signature      = htmlspecialchars($c->digital_signature,     ENT_QUOTES, 'UTF-8');
+        $verifyUrl      = htmlspecialchars(config('app.frontend_url') . '/verify', ENT_QUOTES, 'UTF-8');
+        $propertySize   = htmlspecialchars($c->land->size              ?? '—', ENT_QUOTES, 'UTF-8');
+        $surveyRef      = htmlspecialchars($c->land->survey_reference  ?? '—', ENT_QUOTES, 'UTF-8');
+        $titleStatus    = htmlspecialchars($c->land->title_status      ?? 'Certificate of Occupancy', ENT_QUOTES, 'UTF-8');
 
         $updatedRow = $lastUpdated
-            ? '<tr>
-                <td class="label">Last Updated</td>
-                <td class="value">' . htmlspecialchars($lastUpdated, ENT_QUOTES, 'UTF-8') . '</td>
-               </tr>'
+            ? '<tr><td class="dl">Last Updated</td><td class="dv">' . htmlspecialchars($lastUpdated, ENT_QUOTES, 'UTF-8') . '</td></tr>'
             : '';
 
+        $stampDataUri = $this->stampDataUri();
+        $stampImg     = $stampDataUri
+            ? '<img src="' . $stampDataUri . '" width="180" height="180" style="border-radius:50%; opacity:0.95;" alt="Stamp" />'
+            : '';
+        
+        $greatvibesPath = public_path('fonts/GreatVibes-Regular.ttf');
+        $greatvibesFace = '';
+        if (file_exists($greatvibesPath)) {
+            $greatvibesB64 = base64_encode(file_get_contents($greatvibesPath));
+            $greatvibesFace = "@font-face {
+                font-family: 'GreatVibes';
+                src: url('data:font/ttf;base64,{$greatvibesB64}') format('truetype');
+                font-weight: normal;
+                font-style: normal;
+            }";
+        }
+
+        $nameLength = mb_strlen($c->owner_name);
+
+    if ($nameLength <= 12) {
+        $ownerFontSize = '32pt';  
+    } elseif ($nameLength <= 18) {
+        $ownerFontSize = '28pt';  
+    } elseif ($nameLength <= 24) {
+        $ownerFontSize = '24pt';  
+    } elseif ($nameLength <= 32) {
+        $ownerFontSize = '20pt';  
+    } else {
+        $ownerFontSize = '18pt';  
+    }
         return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
@@ -228,336 +259,448 @@ class CertificateService
 <meta charset="UTF-8">
 <style>
 
-@page {
-    size: A4 portrait;
-    margin: 22px 22px 22px 22px;
-}
-
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
+* { margin:0; padding:0; box-sizing:border-box; }
+{$greatvibesFace}
+@page { size: A4 portrait; margin: 0mm; }
 
 body {
-    font-family: "DejaVu Sans", sans-serif;
-    background: #0D1F1A;
-    color: #FFFFFF;
-    width: 750px;
-    font-size: 8px;
+    font-family: "DejaVu Sans", Arial, sans-serif;
+    font-size: 8pt;
+    background: #ffffff;
+    color: #1a1a1a;
 }
 
-.frame {
-    width: 750px;
-    border: 1.8px solid #C8873A;
-    padding: 3px;
-}
-.frame-inner {
-    width: 100%;
-    border: 0.5px solid rgba(200,135,58,0.30);
-    padding: 0;
-}
-
-.header {
-    background: #091510;
-    text-align: center;
-    padding: 22px 28px 18px;
-    border-bottom: 1px solid rgba(200,135,58,0.22);
-}
-.header-bar {
-    height: 3px;
-    background: #C8873A;
-    margin-bottom: 18px;
-}
-.brand {
-    font-size: 8px;
+/* ── Shared detail table ─────────────────────────── */
+.dtbl            { width:100%; border-collapse:collapse; padding-bottom: 10pt;}
+.dtbl tr         { border-bottom:0.75pt solid #ececec; }
+.dtbl tr:last-child { border-bottom:none; }
+.dl {    font-size: 8pt;
     font-weight: bold;
-    letter-spacing: 0.38em;
-    color: #C8873A;
+    letter-spacing: 0.08em;
+    color: #1D4A35;
     text-transform: uppercase;
-    margin-bottom: 8px;
+    padding: 5pt 5pt 5pt 5pt;
+    width: 46%;
+    white-space: nowrap;
 }
-.cert-title {
-    font-size: 20px;
-    font-weight: bold;
-    color: #FFFFFF;
-    letter-spacing: 0.04em;
-    margin-bottom: 5px;
-}
-.cert-subtitle {
-    font-size: 7px;
-    letter-spacing: 0.20em;
-    color: rgba(200,135,58,0.65);
-    text-transform: uppercase;
+.dv       { font-size:7.5pt; color:#333; text-align:right; padding:5pt 0; word-break:break-word; }
+.dv-gold  { font-size:9pt;   font-weight:bold; color:#B8862A; text-align:right; padding:5pt 0; }
+.dv-small { font-size:6.5pt; color:#555; text-align:right; padding:5pt 0; word-break:break-word; }
+
+/* ── Page 1 typography ─────────────────────────── */
+.p1-brand    { font-size:7pt; letter-spacing:0.30em; color:#1D4A35; font-weight:bold; text-transform:uppercase; margin-bottom:5pt; }
+.p1-title    { font-size:25pt; font-weight:bold; color:#1D4A35; font-style:italic; line-height:1.05; margin-bottom:4pt; }
+.p1-subtitle { font-size:7pt; letter-spacing:0.16em; color:#B8862A; text-transform:uppercase; font-weight:bold; }
+.owner-name-wrap {
+    width:100%;
+    text-align:center;
+    margin: 0 auto;
 }
 
-.body {
-    padding: 18px 22px 16px;
+.owner-name {
+    display:inline-block;
+    text-align:center;
+    font-family: 'GreatVibes', cursive;
+    color:#1D4A35;
+    line-height:1.2;
+    margin-bottom:8pt;
+    letter-spacing:0.5pt;
+    max-width: 90%;
 }
-
-.divider {
-    height: 0.5px;
-    background: rgba(200,135,58,0.28);
-    margin: 14px 0;
-}
-
-.declaration {
-    text-align: center;
-    padding: 6px 0;
-}
-.declaration .intro {
-    font-size: 8.5px;
-    color: rgba(255,255,255,0.38);
-    font-style: italic;
-    margin-bottom: 5px;
-}
-.declaration .owner-name {
-    font-size: 20px;
-    font-weight: bold;
-    color: #E8A850;
-    margin-bottom: 5px;
-}
-.declaration .verb {
-    font-size: 8.5px;
-    color: rgba(255,255,255,0.38);
-    font-style: italic;
-    margin-bottom: 6px;
-}
-.declaration .unit-count {
-    font-size: 40px;
-    font-weight: bold;
-    color: #FFFFFF;
-    line-height: 1;
-    margin-bottom: 2px;
-}
-.declaration .unit-label {
-    font-size: 7.5px;
-    font-weight: bold;
-    letter-spacing: 0.28em;
-    color: rgba(255,255,255,0.30);
-    text-transform: uppercase;
-    margin-bottom: 7px;
-}
-.declaration .in-label {
-    font-size: 8.5px;
-    color: rgba(255,255,255,0.38);
-    font-style: italic;
-    margin-bottom: 5px;
-}
-.declaration .property-name {
-    font-size: 12px;
-    font-weight: bold;
-    color: #C8873A;
-    margin-bottom: 3px;
-}
-.declaration .property-location {
-    font-size: 7.5px;
-    color: rgba(255,255,255,0.32);
-}
-
-.details-table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-}
-.details-table td {
-    padding: 5px 0;
-    border-bottom: 0.5px solid rgba(255,255,255,0.05);
-    vertical-align: top;
-    word-break: break-word;
-    overflow-wrap: break-word;
-}
-.details-table tr:last-child td {
-    border-bottom: none;
-}
-.details-table .label {
-    font-size: 6.5px;
-    font-weight: bold;
-    letter-spacing: 0.16em;
-    color: rgba(200,135,58,0.65);
-    text-transform: uppercase;
-    width: 36%;
-    padding-right: 10px;
-}
-.details-table .value {
-    font-size: 8px;
-    color: rgba(255,255,255,0.75);
-    text-align: right;
-}
-.details-table .value-highlight {
-    font-size: 8.5px;
-    font-weight: bold;
-    color: #E8A850;
-    text-align: right;
-}
-
-.signature-block {
-    background: rgba(255,255,255,0.02);
-    border: 0.5px solid rgba(255,255,255,0.07);
-    border-radius: 3px;
-    padding: 9px 11px;
-    margin-bottom: 12px;
-}
-.signature-label {
-    font-size: 6.5px;
-    font-weight: bold;
-    letter-spacing: 0.18em;
-    color: rgba(200,135,58,0.6);
-    text-transform: uppercase;
-    margin-bottom: 5px;
-}
-.signature-value {
-    font-size: 6px;
-    color: rgba(255,255,255,0.25);
+.certify-lbl { font-size:10pt; color:#888; font-style:italic; margin-bottom:10pt; }
+.holder-lbl  { font-size:10pt; color:#888; font-style:italic; margin-bottom:10pt; }
+.unit-num    { font-size:34pt; font-weight:bold; color:#1D4A35; line-height:1; display:block; }
+.unit-lbl    { font-size:9pt; font-weight:bold; letter-spacing:0.18em; color:#B8862A; text-transform:uppercase; display:block; margin-top:4pt; }
+.in-lbl      { font-size:10pt; color:#888; font-style:italic; margin-bottom:5pt; margin-top:10pt; }
+.prop-title  { font-size:19pt; font-weight:bold; color:#1D4A35; margin-bottom:3pt; line-height:1.15; }
+.prop-loc    { font-size:10pt; color:#aaa; }
+.sig-lbl     { font-size:6pt; font-weight:bold; letter-spacing:0.10em; color:#1D4A35; text-transform:uppercase; margin-bottom:3pt; }
+.sig-val     {
+    font-size: 5.5pt;
+    color: #888;
     word-break: break-all;
-    overflow-wrap: break-word;
-    line-height: 1.7;
-    font-family: "DejaVu Sans Mono", monospace;
-    width: 100%;
+    line-height: 1.9;
+    font-family: "Courier New", Courier, monospace;
+    background-color: #f4f7f5;
+    border: 0.75pt solid #ccd8d0;
+    padding: 4pt 5pt;
 }
-
-.verify-block {
-    text-align: center;
-    padding: 12px 0 10px;
-    border-top: 0.5px solid rgba(200,135,58,0.20);
-    margin-top: 4px;
-}
-.verify-code-label {
-    font-size: 6.5px;
-    font-weight: bold;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: rgba(200,135,58,0.55);
-    margin-bottom: 4px;
-}
-.verify-instruction {
-    font-size: 7px;
-    color: rgba(255,255,255,0.22);
-    margin-bottom: 6px;
-    line-height: 1.6;
-}
-.verify-code {
-    font-size: 11px;
-    font-weight: bold;
-    font-family: "DejaVu Sans Mono", monospace;
+/* Signature */
+.p2-sig-name-style {
+    font-family: 'GreatVibes', cursive;
+    font-size: 22pt;
     color: #E8A850;
-    letter-spacing: 0.05em;
-    margin-bottom: 4px;
-    word-break: break-all;
+    margin-bottom: 3pt;
+    line-height: 1.1;
 }
-.verify-url {
-    font-size: 7px;
-    color: rgba(255,255,255,0.18);
-}
+.vfy-hdr    { font-size:7pt; font-weight:bold; letter-spacing:0.18em; text-transform:uppercase; color:#1D4A35; margin-bottom:3pt; }
+.vfy-sub    { font-size:7pt; color:#888; margin-bottom:6pt; }
+.vfy-num    { font-size:11pt; font-weight:bold; font-family:"Courier New",Courier,monospace; color:#1D4A35; letter-spacing:0.04em; }
+.vfy-url    { font-size:7pt; color:#B8862A; display:block; margin-top:2pt; }
+.ftr-brand  { font-size:8.5pt; font-weight:bold; color:#1D4A35; letter-spacing:0.07em; }
+.ftr-tag    { font-size:6pt; color:#bbb; margin-top:2pt; }
+.ftr-email  { font-size:7pt; color:#888; }
 
-.footer {
-    text-align: center;
-    padding-top: 12px;
-    margin-top: 10px;
-    border-top: 0.5px solid rgba(255,255,255,0.06);
-}
-.footer .brand-footer {
-    font-size: 6.5px;
-    font-weight: bold;
-    letter-spacing: 0.16em;
-    color: rgba(200,135,58,0.40);
-    text-transform: uppercase;
-    margin-bottom: 4px;
-}
-.footer p {
-    font-size: 6px;
-    color: rgba(255,255,255,0.16);
-    line-height: 2;
-}
+/* ── Page 2 typography ─────────────────────────── */
+.p2-co   { font-size:6.5pt; font-weight:bold; letter-spacing:0.16em; color:#C8873A; text-transform:uppercase; margin-bottom:4pt; }
+.p2-deed { font-size:12pt; font-weight:bold; color:#fff; letter-spacing:0.04em; text-transform:uppercase; margin-bottom:3pt; }
+.p2-sub  { font-size:6.5pt; color:#777; font-style:italic; }
+.p2-badge { background-color:#C8873A; color:#0D1F1A; font-size:6.5pt; font-weight:bold; padding:4pt 7pt; line-height:1.6; letter-spacing:0.04em; text-align:center; display:inline-block; }
+.p2-sh { border-bottom:0.75pt solid #2e4a38; padding-bottom:4pt; margin-bottom:6pt; font-size:7pt; font-weight:bold; letter-spacing:0.09em; color:#C8873A; text-transform:uppercase; }
+.p2-sn { color:#7a6040; margin-right:2pt; }
+.p2-sb   { font-size:8pt; color:#aaa; line-height:2; }
+.p2-sb p { margin-bottom:3pt; }
+.p2-sb ul { padding-left:9pt; margin:0; }
+.p2-sb li { margin-bottom:2pt; list-style-type:disc; }
+.p2-role { font-size:6pt; font-weight:bold; letter-spacing:0.08em; color:#8a7040; text-transform:uppercase; margin-top:5pt; margin-bottom:2pt; }
+.p2-pnm  { font-size:9.5pt; font-weight:bold; color:#fff; margin-bottom:2pt; }
+.p2-pdsc { font-size:6.5pt; color:#666; line-height:1.55; }
+.p2-sc   { width:100%; border-collapse:collapse; }
+.p2-sc td { padding:3.5pt 4pt; border-bottom:0.75pt solid #1a2e22; font-size:7.2pt; vertical-align:top; }
+.p2-sk   { color:#8a7040; font-weight:bold; width:42%; text-transform:uppercase; font-size:6.5pt; letter-spacing:0.04em; padding-right:4pt; }
+.p2-sv   { color:#ccc; }
+.p2-sc tr:last-child td { border-bottom:none; }
+.p2-sig-name { font-size:24pt; font-weight:bold; font-style:italic; color:#E8A850; line-height:1.1; margin-bottom:2pt; font-family:"DejaVu Sans", serif; }
+.p2-sig-rule { border-top:0.75pt solid #3a5040; padding-top:4pt; margin-top:4pt; }
+.p2-sig-nm   { font-size:6.5pt; font-weight:bold; color:#ddd; margin-bottom:2pt; }
+.p2-sig-role { font-size:6pt; color:#555; line-height:1.55; }
+.p2-fn    { font-size:6.5pt; color:#444; line-height:1.75; }
+.p2-fchk  { color:#5a8060; margin-right:3pt; }
+.p2-cnlbl { font-size:5.5pt; letter-spacing:0.12em; color:#8a7040; text-transform:uppercase; margin-bottom:2pt; }
+.p2-cn    { font-size:8.5pt; font-weight:bold; font-family:"Courier New",Courier,monospace; color:#E8A850; letter-spacing:0.04em; }
 
 </style>
 </head>
 <body>
 
-<div class="frame">
-<div class="frame-inner">
+<!-- ═══════════════════════════ PAGE 1 ════════════════════════-->
+<table style="width:210mm; border-collapse:collapse; page-break-after:always; table-layout:fixed;">
+<tbody>
+<tr>
+<td style="padding:3pt; border:2pt solid #B8862A; vertical-align:top;">
 
-    <div class="header">
-        <div class="header-bar"></div>
-        <div class="brand">Reu.ng</div>
-        <div class="cert-title">Certificate of Investment</div>
-        <div class="cert-subtitle">Fractional Land Investment &nbsp;&middot;&nbsp; Verified Digital Certificate</div>
-    </div>
+  <table style="width:100%; border-collapse:collapse; border:0.75pt solid #d4aa60; table-layout:fixed;">
+  <tbody>
 
-    <div class="body">
+    <!-- ROW 1: top gold bar — 5pt -->
+    <tr style="height:5pt;">
+      <td colspan="2" style="background-color:#B8862A; height:5pt; font-size:0; line-height:0; padding:0;"></td>
+    </tr>
 
-        <div class="declaration">
-            <div class="intro">This is to certify that</div>
-            <div class="owner-name">{$owner}</div>
-            <div class="verb">is the registered holder of</div>
-            <div class="unit-count">{$units}</div>
-            <div class="unit-label">Units</div>
-            <div class="in-label">in</div>
-            <div class="property-name">{$title}</div>
-            <div class="property-location">{$location}</div>
-        </div>
+    <!-- ROW 2: header — 82pt -->
+    <tr style="height:82pt;">
+      <td colspan="2" style="height:82pt; text-align:center; padding:13pt 16pt 11pt; border-bottom:0.75pt solid #d4aa60; vertical-align:middle; overflow:hidden;">
+        <div class="p1-brand">REU.NG &nbsp;&bull;&nbsp; SPROUTVEST GSE LTD</div>
+        <div class="p1-title">Certificate of Investment</div>
+        <div class="p1-subtitle">FRACTIONAL LAND INVESTMENT &nbsp;&bull;&nbsp; VERIFIED DIGITAL CERTIFICATE</div>
+      </td>
+    </tr>
 
-        <div class="divider"></div>
+    <!-- ROW 3: main body — 480pt -->
+    <tr style="height:480pt;">
 
-        <table class="details-table">
-            <tr>
-                <td class="label">Certificate No.</td>
-                <td class="value">{$certNumber}</td>
-            </tr>
-            <tr>
-                <td class="label">Land Reference</td>
-                <td class="value">{$plotIdentifier}</td>
-            </tr>
-            <tr>
-                <td class="label">Tenure</td>
-                <td class="value">{$tenure}</td>
-            </tr>
-            <tr>
-                <td class="label">Purchase Reference</td>
-                <td class="value">{$purchaseRef}</td>
-            </tr>
-            <tr>
-                <td class="label">Total Invested</td>
-                <td class="value-highlight">{$total}</td>
-            </tr>
-            <tr>
-                <td class="label">Issue Date</td>
-                <td class="value">{$issueDate}</td>
-            </tr>
-            {$updatedRow}
-            <tr>
-                <td class="label">LGA</td>
-                <td class="value">{$lga}</td>
-            </tr>
-            <tr>
-                <td class="label">State</td>
-                <td class="value">{$state}</td>
-            </tr>
+      <!-- Left col: 37% — owner + units badge + property -->
+        <td style="width:37%; height:480pt; padding:20pt 14pt; border-right:0.75pt solid #d4aa60; vertical-align:middle; text-align:center;">
+
+            <div class="certify-lbl">This is to certify that</div>
+            
+            <div class="owner-name-wrap">
+                <div class="owner-name" style="font-size: {$ownerFontSize};">
+                {$owner}
+                </div>
+            </div>
+            
+            <div class="holder-lbl" style="margin-bottom:18pt;">is the registered holder of</div>
+
+            <table style="border-collapse:collapse; margin:18pt auto; border:2.5pt solid #B8862A; width:115pt; height:115pt; text-align:center;">
+            <tr><td style="vertical-align:middle;">
+                <span class="unit-num" style="font-size:34pt;">{$units}</span>
+                <span class="unit-lbl" style="font-size:9pt;">Units</span>
+            </td></tr>
+            </table>
+
+            <div class="in-lbl" style="margin-top:18pt; margin-bottom:10pt;">in</div>
+            <div class="prop-title" style="font-size:19pt; margin-bottom:7pt; line-height:1.15;">{$title}</div>
+            <div class="prop-loc" style="font-size:10pt;">{$location}</div>
+
+        </td>
+
+      <!-- Right col: 63% — detail rows + signature + stamp -->
+      <td style="width:63%; height:480pt; vertical-align:top; padding:14pt 15pt 14pt 13pt; overflow:hidden;">
+
+        <table class="dtbl">
+          <tr><td class="dl">Certificate No.</td>    <td class="dv">{$certNumber}</td></tr>
+          <tr><td class="dl">Land Reference</td>     <td class="dv">{$plotIdentifier}</td></tr>
+          <tr><td class="dl">Tenure</td>              <td class="dv">{$tenure}</td></tr>
+          <tr><td class="dl">Purchase Reference</td> <td class="dv-small">{$purchaseRef}</td></tr>
+          <tr><td class="dl">Total Invested</td>     <td class="dv-gold">{$total}</td></tr>
+          <tr><td class="dl">Issue Date</td>         <td class="dv">{$issueDate}</td></tr>
+          {$updatedRow}
+          <tr><td class="dl">LGA</td>                <td class="dv">{$lga}</td></tr>
+          <tr><td class="dl">State</td>              <td class="dv">{$state}</td></tr>
         </table>
 
-        <div class="divider"></div>
+        <table style="width:100%; border-collapse:collapse; border-top:0.75pt solid #d4aa60; margin-top:10pt;">
+            <tr>
+                <td style="vertical-align:top; padding-top:8pt;">
+                <div class="sig-lbl">Digital Signature (SHA-256 HMAC)</div>
+                <div class="sig-val">{$signature}</div>
 
-        <div class="signature-block">
-            <div class="signature-label">Digital Signature (SHA-256 HMAC)</div>
-            <div class="signature-value">{$signature}</div>
-        </div>
+                <div style="text-align:center; margin-top:20pt;">
+                    {$stampImg}
+                </div>
+                </td>
+            </tr>
+            </table>
+        </td>
+        </tr>
 
-        <div class="verify-block">
-            <div class="verify-code-label">To Verify This Certificate</div>
-            <div class="verify-instruction">Visit the address below and enter the certificate number exactly as printed.</div>
-            <div class="verify-code">{$certNumber}</div>
-            <div class="verify-url">{$verifyUrl}</div>
-        </div>
+    <!-- ROW 4: verify strip — 112pt -->
+    <tr style="height:112pt;">
+      <td colspan="2" style="height:112pt; text-align:center; padding:14pt 18pt 12pt; border-top:0.75pt solid #d4aa60; vertical-align:middle; overflow:hidden;">
+        <div class="vfy-hdr">TO VERIFY THIS CERTIFICATE</div>
+        <div class="vfy-sub">Visit the address below and enter the certificate number exactly as printed.</div>
+        <table style="border-collapse:collapse; margin:0 auto; border:0.75pt solid #B8862A; background-color:#fdf8ef;">
+          <tr><td style="padding:6pt 18pt; text-align:center;">
+            <div class="vfy-num">{$certNumber}</div>
+            <span class="vfy-url">{$verifyUrl}</span>
+          </td></tr>
+        </table>
+      </td>
+    </tr>
 
-        <div class="footer">
-            <div class="brand-footer">SproutVest GSE Ltd</div>
-            <p>This certificate is digitally issued and verifiable at the address above.</p>
-            <p>info@reu.ng</p>
-        </div>
+    <!-- ROW 5: footer — 36pt -->
+    <tr style="height:36pt;">
+      <td colspan="2" style="height:36pt; border-top:0.75pt solid #ececec; padding:0; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse;">
+          <tr>
+            <td style="padding:8pt 14pt; vertical-align:middle;">
+              <div class="ftr-brand">&#9670; SPROUTVEST GSE LTD</div>
+              <div class="ftr-tag">Digitally issued &amp; verifiable certificate</div>
+            </td>
+            <td style="padding:8pt 14pt; text-align:right; vertical-align:middle;">
+              <div class="ftr-email">&#9993; info@reu.ng</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
 
-    </div>
-</div>
-</div>
+  </tbody>
+  </table>
+
+</td>
+</tr>
+</tbody>
+</table>
+<!-- /page1 -->
+
+
+<!-- ═══════════════════════════ PAGE 2 ════════════════════════-->
+<table style="width:210mm; border-collapse:collapse; table-layout:fixed;">
+<tbody>
+<tr>
+<td style="padding:0; vertical-align:top; background-color:#0D1F1A; overflow:hidden;">
+
+  <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+  <tbody>
+
+    <!-- ROW 1: gold bar — 5pt -->
+    <tr style="height:5pt;">
+      <td style="background-color:#C8873A; height:5pt; font-size:0; line-height:0; padding:0;"></td>
+    </tr>
+
+    <!-- ROW 2: dark header — 65pt -->
+    <tr style="height:65pt;">
+      <td style="height:65pt; padding:0; background-color:#091510; border-bottom:0.75pt solid #2a3a28; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse; height:65pt; table-layout:fixed;">
+          <tr>
+            <td style="width:82%; padding:10pt 14pt 8pt; vertical-align:top; background-color:#091510;">
+              <div class="p2-co">&#9670; SPROUTVEST GSE LTD (REU.NG)</div>
+              <div class="p2-deed">DEED OF FRACTIONAL ASSIGNMENT &bull; DIGITAL FORM</div>
+              <div class="p2-sub">This Digital Certificate serves as a legally binding record of fractional ownership made on {$issueDateShort}</div>
+            </td>
+            <td style="width:18%; padding:10pt 14pt 8pt; text-align:right; vertical-align:top; background-color:#091510; white-space:nowrap;">
+              <div class="p2-badge">PAGE<br/>2<br/>OF 2</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ROW 3: 3-column deed content — auto height, clipped by outer 297mm -->
+    <tr>
+      <td style="padding:0; vertical-align:top; background-color:#0D1F1A; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+        <tr>
+
+          <!-- COL 1 — Parties, Whereas, Operative Clause, Nature of Ownership -->
+          <td style="width:33.33%; vertical-align:top; padding:10pt 9pt 10pt 11pt; background-color:#0D1F1A; overflow:hidden;">
+
+            <div class="p2-sh"><span class="p2-sn">1.</span> PARTIES</div>
+            <div class="p2-sb">
+              <div class="p2-role">Assignor / Trustee:</div>
+              <div class="p2-pnm">SproutVest GSE Ltd</div>
+              <div class="p2-pdsc">(A company duly incorporated under the laws of the Federal Republic of Nigeria)</div>
+              <div class="p2-role">Assignee / Investor:</div>
+              <div class="p2-pnm">{$ownerUpper}</div>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">2.</span> WHEREAS</div>
+            <div class="p2-sb">
+              <p>A. The Assignor is the legal or beneficial owner of the parcel described in the Schedule below.</p>
+              <p>B. The Assignor has elected to fractionalize the property into investment units.</p>
+              <p>C. The Assignee has agreed to purchase units representing a proportional interest.</p>
+              <p>D. Full consideration has been received for the units allocated.</p>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">3.</span> OPERATIVE CLAUSE</div>
+            <div class="p2-sb">
+              <p>In consideration of the sum paid, the Assignor hereby transfers to the Assignee a proportional, undivided beneficial interest equivalent to the units stated herein.</p>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">4.</span> NATURE OF OWNERSHIP</div>
+            <div class="p2-sb">
+              <ul>
+                <li>The ownership conferred is fractional and undivided.</li>
+                <li>The Assignee does not hold exclusive physical possession of any portion.</li>
+                <li>Legal title is held by SproutVest GSE Ltd (or its SPV/Trustee) on behalf of all unit holders.</li>
+              </ul>
+            </div>
+
+          </td>
+
+          <!-- COL 2 — Rights, Obligations, Indemnity, Property Schedule -->
+          <td style="width:33.33%; vertical-align:top; padding:10pt 9pt 10pt 10pt; background-color:#0D1F1A; border-left:0.75pt solid #1e3028; overflow:hidden;">
+
+            <div class="p2-sh"><span class="p2-sn">5.</span> RIGHTS OF THE ASSIGNEE</div>
+            <div class="p2-sb">
+              <ul>
+                <li>Hold, transfer, or trade units via the platform</li>
+                <li>Benefit from capital appreciation of the property</li>
+                <li>Receive income or proceeds arising from the property (where applicable)</li>
+                <li>Access verifiable records of ownership</li>
+              </ul>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">6.</span> OBLIGATIONS OF ASSIGNOR / PLATFORM</div>
+            <div class="p2-sb">
+              <ul>
+                <li>Maintain proper legal documentation of the property</li>
+                <li>Ensure the property is free from undisclosed encumbrances</li>
+                <li>Manage the property in the collective interest of investors</li>
+                <li>Facilitate transparency and record integrity</li>
+              </ul>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">7.</span> INDEMNITY</div>
+            <div class="p2-sb">
+              <p>The Assignor guarantees the property is free from known encumbrances and agrees to indemnify the Assignee against any defect in title arising from prior claims or undisclosed interests.</p>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">8.</span> PROPERTY SCHEDULE</div>
+            <div class="p2-sb">
+              <table class="p2-sc">
+                <tr><td class="p2-sk">Description</td><td class="p2-sv">{$title}</td></tr>
+                <tr><td class="p2-sk">Location</td>   <td class="p2-sv">{$location}</td></tr>
+                <tr><td class="p2-sk">Size</td>        <td class="p2-sv">{$propertySize}</td></tr>
+                <tr><td class="p2-sk">Survey Ref.</td> <td class="p2-sv">{$surveyRef}</td></tr>
+                <tr><td class="p2-sk">Title Status</td><td class="p2-sv">{$titleStatus}</td></tr>
+              </table>
+            </div>
+
+          </td>
+
+          <!-- COL 3 — Platform Structure, Governing Law, Disclaimer, Execution -->
+          <td style="width:33.33%; vertical-align:top; padding:10pt 11pt 10pt 10pt; background-color:#0D1F1A; border-left:0.75pt solid #1e3028; overflow:hidden;">
+
+            <div class="p2-sh"><span class="p2-sn">9.</span> PLATFORM STRUCTURE</div>
+            <div class="p2-sb">
+              <ul>
+                <li>The property is held under a custodial or trustee structure.</li>
+                <li>Investors hold beneficial ownership via units.</li>
+                <li>SproutVest GSE Ltd acts as platform operator and asset custodian.</li>
+              </ul>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">10.</span> GOVERNING LAW</div>
+            <div class="p2-sb">
+              <p>This certificate and all rights arising from it shall be governed by the laws of the Federal Republic of Nigeria.</p>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">11.</span> LIMITATION &amp; DISCLAIMER</div>
+            <div class="p2-sb">
+              <ul>
+                <li>This certificate is not a substitute for a traditional C of O.</li>
+                <li>It represents a digitally managed fractional ownership structure.</li>
+                <li>All transactions are subject to platform terms and applicable regulations.</li>
+              </ul>
+            </div>
+
+            <div style="height:8pt;"></div>
+
+            <div class="p2-sh"><span class="p2-sn">12.</span> EXECUTION &amp; AUTHENTICATION</div>
+            <div class="p2-sb">
+              <p style="margin-bottom:6pt;">This certificate is valid upon digital issuance and verification via the platform.</p>
+              <div class="p2-sig-name-style">A. Alalade</div>
+              <div class="p2-sig-rule">
+                <div class="p2-sig-nm">AYOMIDE ALALADE</div>
+                <div class="p2-sig-role">Director, SproutVest GSE Ltd</div>
+              </div>
+            </div>
+
+          </td>
+
+        </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ROW 4: dark footer — 38pt -->
+    <tr style="height:38pt;">
+      <td style="height:38pt; padding:0; background-color:#091510; border-top:0.75pt solid #2a3a28; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse; height:38pt; table-layout:fixed;">
+          <tr>
+            <td style="width:70%; padding:7pt 14pt; vertical-align:middle; background-color:#091510;">
+              <div class="p2-fn">
+                <span class="p2-fchk">&#10003;</span>
+                System-generated digital certificate &mdash; no physical signature required.<br/>
+                All information verifiable on the SproutVest platform.
+              </div>
+            </td>
+            <td style="width:30%; padding:7pt 14pt; text-align:right; vertical-align:middle; background-color:#091510;">
+              <div class="p2-cnlbl">Certificate No.</div>
+              <div class="p2-cn">{$certNumber}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+  </tbody>
+  </table>
+
+</td>
+</tr>
+</tbody>
+</table>
+<!-- /page2 -->
 
 </body>
 </html>
