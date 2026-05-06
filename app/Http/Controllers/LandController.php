@@ -154,7 +154,7 @@ class LandController extends Controller
 
             if ($request->hasFile('images')) {
                 foreach ($request->file('images') as $image) {
-                    $path = $image->store('lands', 'public');
+                    $path = $image->store('lands', 'r2');
                     $land->images()->create(['image_path' => $path]);
                 }
             }
@@ -209,7 +209,7 @@ class LandController extends Controller
 
             if ($request->hasFile('images')) {
                 foreach ($request->file('images') as $image) {
-                    $path = $image->store('lands', 'public');
+                    $path = $image->store('lands', 'r2');
                     $land->images()->create(['image_path' => $path]);
                 }
             }

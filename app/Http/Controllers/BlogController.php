@@ -163,7 +163,7 @@ class BlogController extends Controller
 
         $coverPath = null;
         if ($request->hasFile('cover_image')) {
-            $coverPath = $request->file('cover_image')->store('blog/covers', 'public');
+            $coverPath = $request->file('cover_image')->store('blog/covers', 'r2');
         }
 
         $status      = $data['status'] ?? 'draft';
@@ -220,9 +220,9 @@ class BlogController extends Controller
         // Handle new cover image
         if ($request->hasFile('cover_image')) {
             if ($blogPost->cover_image) {
-                Storage::disk('public')->delete($blogPost->cover_image);
+                Storage::disk('r2')->delete($blogPost->cover_image);
             }
-            $data['cover_image'] = $request->file('cover_image')->store('blog/covers', 'public');
+            $data['cover_image'] = $request->file('cover_image')->store('blog/covers', 'r2');
         }
 
         // Set published_at when publishing for the first time
@@ -258,7 +258,7 @@ class BlogController extends Controller
     public function destroy(BlogPost $blogPost)
     {
         if ($blogPost->cover_image) {
-            Storage::disk('public')->delete($blogPost->cover_image);
+            Storage::disk('r2')->delete($blogPost->cover_image);
         }
 
         $blogPost->tags()->detach();

@@ -73,15 +73,15 @@ class KycController extends Controller
         ]);
 
         $idFrontPath = $request->hasFile('id_front')
-            ? $request->file('id_front')->store('kyc/ids', 'local')
+            ? $request->file('id_front')->store('kyc/ids', 'r2')
             : null;
 
         $idBackPath = $request->hasFile('id_back')
-            ? $request->file('id_back')->store('kyc/ids', 'local')
+            ? $request->file('id_back')->store('kyc/ids', 'r2')
             : null;
 
         $selfiePath = $request->hasFile('selfie')
-            ? $request->file('selfie')->store('kyc/selfies', 'local')
+            ? $request->file('selfie')->store('kyc/selfies', 'r2')
             : null;
 
         try {
@@ -108,7 +108,7 @@ class KycController extends Controller
             });
         } catch (\Throwable $e) {
             foreach (array_filter([$idFrontPath, $idBackPath, $selfiePath]) as $path) {
-                Storage::disk('local')->delete($path);
+                Storage::disk('r2')->delete($path);
             }
 
             return response()->json([

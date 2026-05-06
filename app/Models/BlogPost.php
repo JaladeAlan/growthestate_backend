@@ -51,7 +51,7 @@ class BlogPost extends Model
             return $this->cover_image;
         }
 
-        return \Storage::url($this->cover_image);
+        return \Storage::disk('r2')->url($this->cover_image);
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────

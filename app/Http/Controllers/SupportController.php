@@ -421,11 +421,11 @@ class SupportController extends Controller
             return response()->json(['message' => 'No attachment.'], 404);
         }
 
-        if (!Storage::disk('private')->exists($message->attachment_path)) {
+        if (!Storage::disk('r2')->exists($message->attachment_path)) {
             return response()->json(['message' => 'File not found.'], 404);
         }
 
-        return Storage::disk('private')->response($message->attachment_path);
+        return Storage::disk('r2')->response($message->attachment_path);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -547,7 +547,7 @@ class SupportController extends Controller
         }
 
         return $request->file('attachment')
-            ->store('support-attachments', 'private');
+            ->store('support-attachments', 'r2');
     }
 
     /**

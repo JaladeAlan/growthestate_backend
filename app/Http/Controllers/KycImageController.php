@@ -56,13 +56,13 @@ class KycImageController extends Controller
             return response()->json(['message' => 'Image not available.'], 404);
         }
 
-        // Images are stored on the 'local' disk (storage/app/private)
-        if (! Storage::disk('local')->exists($storedPath)) {
+        // Images are stored on the 'r2' disk (storage/app/private)
+        if (! Storage::disk('r2')->exists($storedPath)) {
             return response()->json(['message' => 'Image file not found.'], 404);
         }
 
-        $mimeType = Storage::disk('local')->mimeType($storedPath);
-        $stream   = Storage::disk('local')->readStream($storedPath);
+        $mimeType = Storage::disk('r2')->mimeType($storedPath);
+        $stream   = Storage::disk('r2')->readStream($storedPath);
 
         return response()->stream(
             function () use ($stream) {
