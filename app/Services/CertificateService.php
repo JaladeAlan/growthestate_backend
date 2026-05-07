@@ -8,6 +8,7 @@ use Dompdf\Dompdf;
 use Dompdf\Options;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 class CertificateService
 {
@@ -42,13 +43,14 @@ class CertificateService
             return $existing->fresh();
         }
 
-        $certNumber = $this->generateCertNumber($land->id);
+        ['cert_number' => $certNumber, 'sequence_number' => $seq] = $this->generateCertNumber($land->id);
 
         $certificate = Certificate::create([
             'user_id'            => $user->id,
             'land_id'            => $land->id,
             'purchase_id'        => $purchase->id,
             'cert_number'        => $certNumber,
+            'sequence_number'    => $seq,
             'digital_signature'  => $this->generateSignature(
                 $certNumber,
                 $purchase->reference,
@@ -163,21 +165,28 @@ class CertificateService
         return "private/certificates/{$filename}";
     }
 
-    private function generateCertNumber(int $landId): string
+    private function generateCertNumber(int $landId): array
     {
-        $year = now()->year;
-        $land = 'L' . str_pad($landId, 4, '0', STR_PAD_LEFT);
-        $seq  = str_pad(
-            Certificate::where('land_id', $landId)->count() + 1,
-            5, '0', STR_PAD_LEFT
-        );
-        return "CERT-{$year}-{$land}-{$seq}";
+        return DB::transaction(function () use ($landId) {
+            $max = Certificate::where('land_id', $landId)
+                ->lockForUpdate()
+                ->max('sequence_number');
+
+            $seq  = ($max ?? 0) + 1;
+            $year = now()->year;
+            $land = 'L' . str_pad($landId, 4, '0', STR_PAD_LEFT);
+
+            return [
+                'cert_number'     => sprintf('CERT-%d-%s-%05d', $year, $land, $seq),
+                'sequence_number' => $seq,
+            ];
+        });
     }
 
     private function generateSignature(string $certNumber, string $reference, string $owner): string
     {
         $raw = "{$certNumber}|{$reference}|{$owner}";
-        return strtoupper(hash_hmac('sha256', $raw, config('app.key')));
+        return strtoupper(hash_hmac('sha256', $raw, config('services.certificate.secret')));
     }
 
     private function stampDataUri(): string

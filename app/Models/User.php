@@ -133,6 +133,11 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         return $this->hasMany(Transaction::class);
     }
 
+    public function recentTransactions(): HasMany
+    {
+        return $this->hasMany(Transaction::class)->latest()->limit(10);
+    }
+    
     public function lands()
     {
         return $this->belongsToMany(Land::class, 'user_land')

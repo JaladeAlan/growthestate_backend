@@ -218,7 +218,7 @@ Route::middleware(['jwt.auth'])->group(function () {
         Route::delete('/marketplace/{listing}',  [MarketplaceController::class, 'destroy']);
         Route::post('/marketplace/{listing}/offers', [MarketplaceController::class, 'makeOffer'])
             ->middleware('throttle:10,60');
-        Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer']);
+        Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer'])->middleware('throttle:5,1');
         Route::patch('/marketplace/{listing}/offers/{offer}/reject',   [MarketplaceController::class, 'rejectOffer']);
         Route::patch('/marketplace/{listing}/offers/{offer}/withdraw', [MarketplaceController::class, 'withdrawOffer']);
         Route::get('/marketplace/{listing}/messages',  [MarketplaceController::class, 'messages']);
@@ -276,7 +276,7 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
         Route::post('/screenings/{screening}/block',  [ComplianceController::class, 'block'])->middleware('throttle:30,1');
         Route::post('/users/{user}/rescreen',         [ComplianceController::class, 'rescreen'])->middleware('throttle:10,1');
     });
-    
+
     // ── Support ───────────────────────────────────────────────────────────────
     Route::get('/support/tickets',                      [AdminSupportController::class, 'index']);
     Route::get('/support/tickets/{ticket}',             [AdminSupportController::class, 'show']);

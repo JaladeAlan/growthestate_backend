@@ -2,25 +2,21 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Land;
-use App\Models\LedgerEntry;
 use App\Models\MarketplaceListing;
 use App\Models\MarketplaceMessage;
 use App\Models\MarketplaceOffer;
 use App\Models\MarketplaceTransaction;
-use App\Models\Purchase;
-use App\Models\Transaction;
 use App\Models\UserLand;
+use App\Services\MarketplaceTradeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class MarketplaceController extends Controller
 {
-    // Platform fee percentage (1%)
-    const FEE_PCT = 1;
+    public function __construct(
+        private readonly MarketplaceTradeService $tradeService,
+    ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
     // LISTINGS
@@ -104,9 +100,11 @@ class MarketplaceController extends Controller
 
             $owned = $holding ? (int) $holding->units : 0;
 
+            // Lock listings too so concurrent requests can't over-commit units
             $alreadyListed = MarketplaceListing::where('seller_id', $user->id)
                 ->where('land_id', $data['land_id'])
                 ->where('status', 'active')
+                ->lockForUpdate()
                 ->sum('units_for_sale');
 
             $available = $owned - $alreadyListed;
@@ -155,6 +153,9 @@ class MarketplaceController extends Controller
 
     /**
      * DELETE /marketplace/{listing}
+     *
+     * Note: units are not escrowed at listing time, so cancellation
+     * only needs to reject pending offers and mark the listing cancelled.
      */
     public function destroy(Request $request, MarketplaceListing $listing)
     {
@@ -221,6 +222,9 @@ class MarketplaceController extends Controller
 
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/accept
+     *
+     * PIN check and auth happen here; all trade logic is delegated
+     * to MarketplaceTradeService::execute().
      */
     public function acceptOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
     {
@@ -233,10 +237,6 @@ class MarketplaceController extends Controller
             abort(422, 'This offer is no longer pending.');
         }
 
-        if ($listing->status !== 'active') {
-            abort(422, 'Listing is not active.');
-        }
-
         $request->validate([
             'transaction_pin' => 'required|digits:4',
         ]);
@@ -245,199 +245,13 @@ class MarketplaceController extends Controller
             throw ValidationException::withMessages(['transaction_pin' => 'Incorrect PIN.']);
         }
 
-        return DB::transaction(function () use ($listing, $offer, $seller) {
+        $summary = $this->tradeService->execute($listing, $offer);
 
-            $buyerId  = $offer->buyer_id;
-            $sellerId = $seller->id;
-
-            [$firstId, $secondId] = $buyerId < $sellerId
-                ? [$buyerId, $sellerId]
-                : [$sellerId, $buyerId];
-
-            $lockedUsers = \App\Models\User::whereIn('id', [$firstId, $secondId])
-                ->lockForUpdate()
-                ->orderBy('id')
-                ->get()
-                ->keyBy('id');
-
-            $buyer  = $lockedUsers[$buyerId];
-            $seller = $lockedUsers[$sellerId];
-
-            $totalKobo  = $offer->offer_price_kobo * $offer->units;
-            $feeKobo    = (int) round($totalKobo * self::FEE_PCT / 100);
-            $sellerGets = $totalKobo - $feeKobo;
-            $reference  = 'MKT-' . Str::uuid();
-
-            // ── 1. Check buyer has enough balance ─────────────────────────
-            if ($buyer->balance_kobo < $totalKobo) {
-                throw ValidationException::withMessages([
-                    'balance' => 'Buyer has insufficient wallet balance to complete this trade.',
-                ]);
-            }
-
-            // ── 2. Check seller still owns enough units ───────────────────
-            $sellerUnits = (int) UserLand::where('user_id', $seller->id)
-                ->where('land_id', $listing->land_id)
-                ->lockForUpdate()
-                ->value('units');
-
-            if ($sellerUnits < $offer->units) {
-                throw ValidationException::withMessages([
-                    'units' => 'You no longer have enough units to complete this trade.',
-                ]);
-            }
-
-            // ── 3. Debit buyer wallet ─────────────────────────────────────
-            $buyer->balance_kobo -= $totalKobo;
-            $buyer->save();
-
-            LedgerEntry::create([
-                'uid'           => $buyer->id,
-                'type'          => 'marketplace_purchase',
-                'amount_kobo'   => $totalKobo,
-                'balance_after' => $buyer->balance_kobo,
-                'reference'     => $reference,
-            ]);
-
-            // ── 4. Credit seller wallet (minus fee) ───────────────────────
-            $seller->balance_kobo += $sellerGets;
-            $seller->save();
-
-            LedgerEntry::create([
-                'uid'           => $seller->id,
-                'type'          => 'marketplace_sale',
-                'amount_kobo'   => $sellerGets,
-                'balance_after' => $seller->balance_kobo,
-                'reference'     => $reference,
-            ]);
-
-            // ── 5. Transfer units: decrement seller ───────────────────────
-            UserLand::where('user_id', $seller->id)
-                ->where('land_id', $listing->land_id)
-                ->decrement('units', $offer->units);
-
-            // Remove row if seller now holds zero units
-            UserLand::where('user_id', $seller->id)
-                ->where('land_id', $listing->land_id)
-                ->where('units', '<=', 0)
-                ->delete();
-
-            // ── 6. Transfer units: increment buyer ────────────────────────
-            DB::statement("
-                INSERT INTO user_land (user_id, land_id, units, created_at, updated_at)
-                VALUES (?, ?, ?, NOW(), NOW())
-                ON CONFLICT (user_id, land_id)
-                DO UPDATE SET units = user_land.units + EXCLUDED.units, updated_at = NOW()
-            ", [$buyer->id, $listing->land_id, $offer->units]);
-
-            // ── 7. Update Purchase records ────────────────────────────────
-            $sellerPurchase = Purchase::where('user_id', $seller->id)
-                ->where('land_id', $listing->land_id)
-                ->lockForUpdate()
-                ->first();
-
-            if (! $sellerPurchase || $sellerPurchase->units < $offer->units) {
-                throw ValidationException::withMessages([
-                    'units' => 'Purchase record inconsistency detected. Please contact support.',
-                ]);
-            }
-
-            $sellerPurchase->decrement('units', $offer->units);
-
-            // Upsert buyer's purchase record
-            DB::statement("
-                INSERT INTO purchases
-                    (user_id, land_id, units, units_sold, total_amount_paid_kobo,
-                     total_amount_received_kobo, status, purchase_date, reference, created_at, updated_at)
-                VALUES (?, ?, ?, 0, ?, 0, 'active', ?, ?, NOW(), NOW())
-                ON CONFLICT (user_id, land_id)
-                DO UPDATE SET
-                    units                  = purchases.units + EXCLUDED.units,
-                    total_amount_paid_kobo = purchases.total_amount_paid_kobo + EXCLUDED.total_amount_paid_kobo,
-                    reference              = EXCLUDED.reference,
-                    purchase_date          = EXCLUDED.purchase_date,
-                    updated_at             = NOW()
-            ", [
-                $buyer->id,
-                $listing->land_id,
-                $offer->units,
-                $totalKobo,
-                now()->toDateTimeString(),
-                $reference,
-            ]);
-
-            // ── 8. Log transaction for both parties ───────────────────────
-            Transaction::insert([
-                [
-                    'user_id'          => $buyer->id,
-                    'land_id'          => $listing->land_id,
-                    'type'             => 'marketplace_purchase',
-                    'units'            => $offer->units,
-                    'amount_kobo'      => $totalKobo,
-                    'status'           => 'completed',
-                    'reference'        => $reference,
-                    'transaction_date' => now(),
-                    'created_at'       => now(),
-                    'updated_at'       => now(),
-                ],
-                [
-                    'user_id'          => $seller->id,
-                    'land_id'          => $listing->land_id,
-                    'type'             => 'marketplace_sale',
-                    'units'            => $offer->units,
-                    'amount_kobo'      => $sellerGets,
-                    'status'           => 'completed',
-                    'reference'        => $reference,
-                    'transaction_date' => now(),
-                    'created_at'       => now(),
-                    'updated_at'       => now(),
-                ],
-            ]);
-
-            // ── 9. Reject remaining offers, close listing ─────────────────
-            MarketplaceOffer::where('listing_id', $listing->id)
-                ->where('id', '!=', $offer->id)
-                ->where('status', 'pending')
-                ->update(['status' => 'rejected']);
-
-            $offer->update(['status' => 'accepted']);
-
-            $remainingUnits = $listing->units_for_sale - $offer->units;
-            $listing->update([
-                'status'         => $remainingUnits > 0 ? 'active' : 'sold',
-                'units_for_sale' => $remainingUnits,
-            ]);
-
-            // ── 10. Log the marketplace transaction ───────────────────────
-            MarketplaceTransaction::create([
-                'listing_id'           => $listing->id,
-                'offer_id'             => $offer->id,
-                'buyer_id'             => $buyer->id,
-                'seller_id'            => $seller->id,
-                'land_id'              => $listing->land_id,
-                'units'                => $offer->units,
-                'price_per_unit_kobo'  => $offer->offer_price_kobo,
-                'total_kobo'           => $totalKobo,
-                'platform_fee_kobo'    => $feeKobo,
-                'seller_receives_kobo' => $sellerGets,
-                'reference'            => $reference,
-                'completed_at'         => now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Trade complete. Units transferred immediately.',
-                'data'    => [
-                    'reference'            => $reference,
-                    'units'                => $offer->units,
-                    'total_kobo'           => $totalKobo,
-                    'platform_fee_kobo'    => $feeKobo,
-                    'seller_receives_kobo' => $sellerGets,
-                    'buyer'                => $buyer->only('id', 'name'),
-                    'seller'               => $seller->only('id', 'name'),
-                ],
-            ]);
-        });
+        return response()->json([
+            'success' => true,
+            'message' => 'Trade complete. Units transferred immediately.',
+            'data'    => $summary,
+        ]);
     }
 
     /**
@@ -482,9 +296,20 @@ class MarketplaceController extends Controller
         $user = $request->user();
         $this->assertChatParticipant($listing, $user);
 
-        $otherId = $user->id === $listing->seller_id
-            ? (int) $request->input('with')
-            : $listing->seller_id;
+        if ($user->id === $listing->seller_id) {
+            $otherId = (int) $request->input('with');
+
+            // Ensure the seller can only read threads with actual buyers
+            $isBuyer = MarketplaceOffer::where('listing_id', $listing->id)
+                ->where('buyer_id', $otherId)
+                ->exists();
+
+            if (! $isBuyer) {
+                abort(403, 'Invalid conversation partner.');
+            }
+        } else {
+            $otherId = $listing->seller_id;
+        }
 
         $messages = MarketplaceMessage::where('listing_id', $listing->id)
             ->where(fn ($q) =>
@@ -563,8 +388,9 @@ class MarketplaceController extends Controller
     {
         $userId = $request->user()->id;
 
-        $txs = MarketplaceTransaction::where('buyer_id', $userId)
-            ->orWhere('seller_id', $userId)
+        $txs = MarketplaceTransaction::where(fn ($q) =>
+                $q->where('buyer_id', $userId)->orWhere('seller_id', $userId)
+            )
             ->with(['land:id,title,location', 'buyer:id,name', 'seller:id,name'])
             ->orderByDesc('completed_at')
             ->paginate(20);

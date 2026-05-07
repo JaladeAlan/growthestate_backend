@@ -8,7 +8,7 @@ class Certificate extends Model
 {
     protected $fillable = [
         'user_id', 'land_id', 'purchase_id',
-        'cert_number', 'digital_signature',
+        'cert_number', 'digital_signature', 'sequence_number',
         'owner_name', 'units', 'total_invested', 'purchase_reference',
         'property_title', 'property_location',
         'plot_identifier', 'tenure', 'lga', 'state',
