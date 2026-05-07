@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\KycVerification;
+use App\Models\UserScreening;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -57,19 +59,28 @@ class KycController extends Controller
 
         $isBvn = $request->input('id_type') === 'bvn';
 
+        $request->merge([
+            'is_pep' => filter_var($request->input('is_pep'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
+        ]);
+
         $data = $request->validate([
-            'full_name'     => 'required|string|max:255',
-            'date_of_birth' => 'required|date|before:today',
-            'phone_number'  => 'required|string|max:20',
-            'address'       => 'required|string',
-            'city'          => 'required|string|max:100',
-            'state'         => 'required|string|max:100',
-            'country'       => 'sometimes|string|max:100',
-            'id_type'       => 'required|in:nin,drivers_license,voters_card,passport,bvn',
-            'id_number'     => 'required|string|max:50',
-            'id_front'      => [\Illuminate\Validation\Rule::requiredIf(! $isBvn), 'nullable', 'image', 'max:5120'],
-            'id_back'       => 'nullable|image|max:5120',
-            'selfie'        => 'required|image|max:5120',
+            'full_name'        => 'required|string|max:255',
+            'date_of_birth'    => 'required|date|before:today',
+            'phone_number'     => 'required|string|max:20',
+            'address'          => 'required|string',
+            'city'             => 'required|string|max:100',
+            'state'            => 'required|string|max:100',
+            'country'          => 'sometimes|string|max:100',
+            'id_type'          => 'required|in:nin,drivers_license,voters_card,passport,bvn',
+            'id_number'        => 'required|string|max:50',
+            'id_front'         => [Rule::requiredIf(! $isBvn), 'nullable', 'image', 'max:5120'],
+            'id_back'          => 'nullable|image|max:5120',
+            'selfie'           => 'required|image|max:5120',
+            'is_pep'           => 'required|boolean',
+            'pep_relationship' => 'required_if:is_pep,true|in:self,family,associate',
+            'pep_role'         => 'required_if:is_pep,true|nullable|string|max:100',
+            'pep_country'      => 'required_if:is_pep,true|nullable|string|size:2',
+            'pep_details'      => 'required_if:is_pep,true|nullable|string|max:500',
         ]);
 
         $idFrontPath = $request->hasFile('id_front')
@@ -83,6 +94,8 @@ class KycController extends Controller
         $selfiePath = $request->hasFile('selfie')
             ? $request->file('selfie')->store('kyc/selfies', 'r2')
             : null;
+
+        $uploadedPaths = array_filter([$idFrontPath, $idBackPath, $selfiePath]);
 
         try {
             $kyc = DB::transaction(function () use ($user, $data, $idFrontPath, $idBackPath, $selfiePath) {
@@ -103,11 +116,49 @@ class KycController extends Controller
                         'selfie_path'      => $selfiePath,
                         'status'           => 'pending',
                         'rejection_reason' => null,
+                        'is_pep'           => $data['is_pep'],
+                        'pep_relationship' => $data['pep_relationship'] ?? null,
+                        'pep_role'         => $data['pep_role'] ?? null,
+                        'pep_country'      => $data['pep_country'] ?? null,
+                        'pep_details'      => $data['pep_details'] ?? null,
                     ]
                 );
             });
+
+            if ($data['is_pep']) {
+                $user->update(['screening_status' => 'flagged']);
+
+                UserScreening::create([
+                    'user_id' => $user->id,
+                    'status'  => 'flagged',
+                    'trigger' => 'pep_self_declaration',
+                    'matches' => [[
+                        'source'       => 'self_declared',
+                        'matched_name' => $user->name,
+                        'queried_name' => $user->name,
+                        'score'        => 100,
+                        'is_pep'       => true,
+                        'program'      => $data['pep_role'] ?? null,
+                        'entry_type'   => 'individual',
+                    ]],
+                ]);
+
+                Log::channel('telegram')->warning(
+                    '⚠️ PEP Self-Declaration — Manual review required',
+                    [
+                        'user_id'          => $user->id,
+                        'name'             => $user->name,
+                        'pep_relationship' => $data['pep_relationship'] ?? null,
+                        'pep_role'         => $data['pep_role'] ?? null,
+                        'pep_country'      => $data['pep_country'] ?? null,
+                    ]
+                );
+            }
+
+            \App\Jobs\ScreenUserJob::dispatch($user, 'kyc')->onQueue('default');
+
         } catch (\Throwable $e) {
-            foreach (array_filter([$idFrontPath, $idBackPath, $selfiePath]) as $path) {
+            foreach ($uploadedPaths as $path) {
                 Storage::disk('r2')->delete($path);
             }
 
@@ -141,9 +192,19 @@ class KycController extends Controller
             return response()->json(['error' => 'Invalid image type.'], 422);
         }
 
+        $pathColumn = $imageType . '_path';
+        $filePath   = $kyc->getRawOriginal($pathColumn);
+
+        if (! $filePath) {
+            return response()->json(['error' => 'Image not found.'], 404);
+        }
+
+        $expiresAt = now()->addMinutes(15);
+        $signedUrl = Storage::disk('r2')->temporaryUrl($filePath, $expiresAt);
+
         return response()->json([
-            'url'        => url("/api/kyc/{$id}/image/{$imageType}"),
-            'expires_at' => null,
+            'url'        => $signedUrl,
+            'expires_at' => $expiresAt->toIso8601String(),
         ]);
     }
 
@@ -172,9 +233,9 @@ class KycController extends Controller
 
         $base = url("/api/kyc/{$kyc->id}/image");
 
-        $data['id_front_url'] = $kyc->id_front_path ? "{$base}/id_front" : null;
-        $data['id_back_url']  = $kyc->id_back_path  ? "{$base}/id_back"  : null;
-        $data['selfie_url']   = "{$base}/selfie";
+        $data['id_front_url'] = $kyc->getRawOriginal('id_front_path') ? "{$base}/id_front" : null;
+        $data['id_back_url']  = $kyc->getRawOriginal('id_back_path')  ? "{$base}/id_back"  : null;
+        $data['selfie_url']   = $kyc->getRawOriginal('selfie_path')   ? "{$base}/selfie"   : null;
 
         unset($data['id_front_path'], $data['id_back_path'], $data['selfie_path']);
 
@@ -185,7 +246,7 @@ class KycController extends Controller
     {
         $this->authorizeAdmin();
 
-        $kyc = KycVerification::findOrFail($id);
+        $kyc = KycVerification::with('user')->findOrFail($id);
 
         if ($kyc->status === 'approved') {
             return response()->json([
@@ -194,17 +255,26 @@ class KycController extends Controller
             ], 400);
         }
 
-        $kyc->update([
-            'status'           => 'approved',
-            'verified_at'      => now(),
-            'verified_by'      => auth()->id(),
-            'rejection_reason' => null,
-        ]);
+         DB::transaction(function () use ($kyc) {
+            $kyc->update([
+                'status'           => 'approved',
+                'verified_at'      => now(),
+                'verified_by'      => auth()->id(),
+                'rejection_reason' => null,
+            ]);
+            
+            $kyc->user->update(['is_kyc_verified' => true]);
 
+            // Dispatches only after commit, so the worker always sees approved KYC
+            DB::afterCommit(function () use ($kyc) {
+                ScreenUserJob::dispatch($kyc->user, 'kyc_approved')->onQueue('default');
+            });
+        });
+        
         return response()->json([
             'success' => true,
             'message' => 'KYC approved successfully',
-            'data'    => $kyc,
+            'data'    => $kyc->fresh(),
         ]);
     }
 

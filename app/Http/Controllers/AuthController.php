@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Services\MailService;
 use App\Mail\VerifyEmailMail;
 use App\Mail\ResetPasswordEmail;
+use App\Jobs\ScreenUserJob;
 
 class AuthController extends Controller
 {
@@ -107,6 +108,8 @@ class AuthController extends Controller
                 'email'    => $request->email,
                 'password' => Hash::make($request->password),
             ]);
+            
+            ScreenUserJob::dispatch($user, 'registration')->onQueue('default');
 
             if ($request->filled('referral_code')) {
                 $referrer = User::where('referral_code', $request->referral_code)->first();

@@ -23,6 +23,7 @@ use App\Http\Controllers\WaitlistController;
 use App\Http\Controllers\BlogController;
 use App\Http\Controllers\LiveChatController;
 use App\Http\Controllers\PurchaseController;
+use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\PaystackWebhookController;
 use App\Http\Controllers\MonnifyWebhookController;
 use App\Http\Controllers\OpayWebhookController;
@@ -266,6 +267,16 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
     Route::post('/kyc/{id}/reject',      [KycController::class, 'adminReject'])->middleware('throttle:30,1');
     Route::post('/kyc/{id}/resubmit',    [KycController::class, 'adminRequestResubmit'])->middleware('throttle:30,1');
 
+    // ── Compliance (Sanctions & PEP) ──────────────────────────────────────────
+    Route::prefix('compliance')->group(function () {
+        Route::get('/stats',                          [ComplianceController::class, 'stats']);
+        Route::get('/screenings',                     [ComplianceController::class, 'index']);
+        Route::get('/screenings/{screening}',         [ComplianceController::class, 'show']);
+        Route::post('/screenings/{screening}/clear',  [ComplianceController::class, 'clear'])->middleware('throttle:30,1');
+        Route::post('/screenings/{screening}/block',  [ComplianceController::class, 'block'])->middleware('throttle:30,1');
+        Route::post('/users/{user}/rescreen',         [ComplianceController::class, 'rescreen'])->middleware('throttle:10,1');
+    });
+    
     // ── Support ───────────────────────────────────────────────────────────────
     Route::get('/support/tickets',                      [AdminSupportController::class, 'index']);
     Route::get('/support/tickets/{ticket}',             [AdminSupportController::class, 'show']);

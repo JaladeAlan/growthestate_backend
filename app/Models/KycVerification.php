@@ -27,11 +27,18 @@ class KycVerification extends Model
         'rejection_reason',
         'verified_at',
         'verified_by',
+        'is_pep',
+        'pep_relationship',
+        'pep_role',
+        'pep_country',
+        'pep_details',
     ];
 
     protected $casts = [
         'date_of_birth' => 'date',
         'verified_at'   => 'datetime',
+        'is_pep'        => 'boolean',
+        'pep_relationship' => 'string',
     ];
 
     protected $hidden = [
