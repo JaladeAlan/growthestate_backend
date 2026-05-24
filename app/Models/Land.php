@@ -36,6 +36,8 @@ class Land extends Model
         'electricity', 'water_supply', 'sewage', 'other_facilities',
         'comm_lines',
 
+        'neighbouring_transactions',
+        
         // ── Valuation & fiscal ─────────────────────────────────────────────
         'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
     ];
@@ -58,6 +60,7 @@ class Land extends Model
         'land_titles'             => 'array',
         'historical_transactions' => 'array',
         'comm_lines'              => 'array',
+        'neighbouring_transactions' => 'array',
 
         // ── Numeric ────────────────────────────────────────────────────────
         'slope'              => 'float',

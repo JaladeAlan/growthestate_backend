@@ -123,7 +123,7 @@ class LandController extends Controller
     // POST /admin/lands
     public function store(Request $request)
     {
-        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history']);
+        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history', 'neighbouring_transactions']);
 
         $request->validate([
             ...$this->coreRules(),
@@ -174,7 +174,7 @@ class LandController extends Controller
     // POST /admin/lands/{id}
     public function update(Request $request, Land $land)
     {
-        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history']);
+        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history', 'neighbouring_transactions']);
 
         $request->validate([
             ...$this->coreRules(creating: false),
@@ -434,8 +434,9 @@ class LandController extends Controller
             'road_type', 'road_category', 'road_condition',
             'electricity', 'water_supply', 'sewage', 'other_facilities',
             'comm_lines',
+            'neighbouring_transactions',
             // Valuation & fiscal
-            'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
+            'overall_value', 'current_land_value', 'rental_pm', 'rental_pa', 
         ];
 
         $extracted = [];
@@ -559,6 +560,12 @@ class LandController extends Controller
             'current_land_value' => 'nullable|numeric',
             'rental_pm'          => 'nullable|numeric',
             'rental_pa'          => 'nullable|numeric',
+
+            'neighbouring_transactions'             => 'nullable|array',
+            'neighbouring_transactions.*.plot_size' => 'nullable|numeric|min:0',
+            'neighbouring_transactions.*.year'      => 'nullable|integer|min:1900|max:2100',
+            'neighbouring_transactions.*.value'     => 'nullable|numeric|min:0',
+            'neighbouring_transactions.*.distance_m'=> 'nullable|numeric|min:0',
 
             // Valuation history — [[year, month, value], ...]
             'valuation_history'       => 'nullable|array',
