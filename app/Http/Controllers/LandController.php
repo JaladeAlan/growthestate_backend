@@ -430,18 +430,6 @@ class LandController extends Controller
                 ['value' => (float) $value]
             );
         }
-
-        $this->syncCurrentLandValue($land);
-    }
-
-    private function syncCurrentLandValue(Land $land): void
-    {
-        $latest = $land->valuations()
-            ->orderByDesc('year')
-            ->orderByDesc('month')
-            ->first();
-
-        $land->updateQuietly(['current_land_value' => $latest?->value]);
     }
 
     private function coreRules(bool $creating = true): array
