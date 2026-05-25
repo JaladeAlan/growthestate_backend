@@ -19,7 +19,6 @@ class LandController extends Controller
     // PUBLIC
     // ─────────────────────────────────────────────────────────────────────────
 
-    // GET /land  (public, cached)
     public function index(Request $request)
     {
         $lands = Cache::remember('lands.public', 300, fn () =>
@@ -32,7 +31,6 @@ class LandController extends Controller
         return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    // GET /lands  (authenticated)
     public function indexAuth(Request $request)
     {
         $lands = Cache::remember('lands.auth', 300, fn () =>
@@ -44,7 +42,6 @@ class LandController extends Controller
         return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    // GET /lands/map  (authenticated, bounding-box filtered)
     public function mapIndex(Request $request)
     {
         $request->validate([
@@ -73,17 +70,14 @@ class LandController extends Controller
         return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    // GET /lands/{id}
     public function show(Land $land)
     {
         return response()->json([
             'success' => true,
-            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations'])
-                              ->withGeometry(),
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations']),
         ]);
     }
 
-    // GET /lands/{id}/units
     public function units(Land $land)
     {
         $user = auth()->user();
@@ -109,7 +103,6 @@ class LandController extends Controller
     // ADMIN
     // ─────────────────────────────────────────────────────────────────────────
 
-    // GET /admin/lands
     public function adminIndex()
     {
         $lands = Land::with(['images', 'latestPrice'])
@@ -119,17 +112,14 @@ class LandController extends Controller
         return response()->json(['success' => true, 'data' => $lands]);
     }
 
-    // GET /admin/lands/{id}  — used by the edit form
     public function adminShow(Land $land)
     {
         return response()->json([
             'success' => true,
-            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations'])
-                              ->withGeometry(),
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations']),
         ]);
     }
 
-    // POST /admin/lands
     public function store(Request $request)
     {
         $this->decodeJsonStrings($request, [
@@ -184,7 +174,6 @@ class LandController extends Controller
         ], 201);
     }
 
-    // POST /admin/lands/{id}
     public function update(Request $request, Land $land)
     {
         $this->decodeJsonStrings($request, [
@@ -209,12 +198,12 @@ class LandController extends Controller
 
             [$centerLat, $centerLng, $wkt] = $this->resolveGeometry($request->geometry);
 
-            $updates['coordinates'] = DB::raw(
-                DB::connection()->getPdo()->quote("ST_GeomFromText('{$wkt}', 4326)")
-            );
-
-            $updates['lat'] = $centerLat;
-            $updates['lng'] = $centerLng;
+            // ✅ DB::raw() must NOT be wrapped with PDO::quote() — that turns
+            //    the expression into a plain string literal and breaks PostGIS.
+            //    Use the same pattern as extractCoreFields() in store().
+            $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
+            $updates['lat']         = $centerLat;
+            $updates['lng']         = $centerLng;
         }
 
         foreach (['title', 'location', 'size', 'total_units', 'description', 'is_available'] as $field) {
@@ -254,7 +243,6 @@ class LandController extends Controller
         ]);
     }
 
-    // PATCH /admin/lands/{id}/price
     public function updatePrice(Request $request, Land $land)
     {
         $request->validate([
@@ -280,11 +268,9 @@ class LandController extends Controller
         ]);
     }
 
-    // PATCH /admin/lands/{id}/availability
     public function toggleAvailability(Request $request, Land $land)
     {
         $land->update(['is_available' => ! $land->is_available]);
-
         $this->clearLandCache();
 
         return response()->json([
@@ -297,7 +283,6 @@ class LandController extends Controller
     // VALUATION HISTORY
     // ─────────────────────────────────────────────────────────────────────────
 
-    // GET /admin/lands/{id}/valuation
     public function getValuations(Land $land)
     {
         return response()->json([
@@ -306,7 +291,6 @@ class LandController extends Controller
         ]);
     }
 
-    // POST /admin/lands/{id}/valuation
     public function addValuationEntry(Request $request, Land $land)
     {
         $request->validate([
@@ -320,7 +304,7 @@ class LandController extends Controller
 
         if ($land->valuations()->where('year', $year)->where('month', $month)->exists()) {
             throw ValidationException::withMessages([
-                'month' => "A valuation entry for {$year}-{$month} already exists. Use the update endpoint to change it.",
+                'month' => "A valuation entry for {$year}-{$month} already exists.",
             ]);
         }
 
@@ -332,62 +316,36 @@ class LandController extends Controller
 
         $this->clearLandCache();
 
-        return response()->json([
-            'success' => true,
-            'message' => "Valuation entry for {$year}-{$month} added.",
-            'data'    => $entry,
-        ], 201);
+        return response()->json(['success' => true, 'data' => $entry], 201);
     }
 
-    // PATCH /admin/lands/{id}/valuation/{year}/{month}
     public function updateValuationEntry(Request $request, Land $land, int $year, int $month)
     {
-        $request->validate([
-            'value' => 'required|numeric|min:0',
-        ]);
+        $request->validate(['value' => 'required|numeric|min:0']);
 
-        $entry = $land->valuations()
-            ->where('year', $year)
-            ->where('month', $month)
-            ->first();
+        $entry = $land->valuations()->where('year', $year)->where('month', $month)->first();
 
         if (! $entry) {
-            throw ValidationException::withMessages([
-                'month' => "No valuation entry found for {$year}-{$month}.",
-            ]);
+            throw ValidationException::withMessages(['month' => "No valuation entry found for {$year}-{$month}."]);
         }
 
         $entry->update(['value' => $request->value]);
-
         $this->clearLandCache();
 
-        return response()->json([
-            'success' => true,
-            'message' => "Valuation entry for {$year}-{$month} updated.",
-            'data'    => $entry->fresh(),
-        ]);
+        return response()->json(['success' => true, 'data' => $entry->fresh()]);
     }
 
-    // DELETE /admin/lands/{id}/valuation/{year}/{month}
     public function deleteValuationEntry(Land $land, int $year, int $month)
     {
-        $deleted = $land->valuations()
-            ->where('year', $year)
-            ->where('month', $month)
-            ->delete();
+        $deleted = $land->valuations()->where('year', $year)->where('month', $month)->delete();
 
         if (! $deleted) {
-            throw ValidationException::withMessages([
-                'month' => "No valuation entry found for {$year}-{$month}.",
-            ]);
+            throw ValidationException::withMessages(['month' => "No valuation entry found for {$year}-{$month}."]);
         }
 
         $this->clearLandCache();
 
-        return response()->json([
-            'success' => true,
-            'message' => "Valuation entry for {$year}-{$month} removed.",
-        ]);
+        return response()->json(['success' => true, 'message' => "Valuation entry for {$year}-{$month} removed."]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -454,9 +412,7 @@ class LandController extends Controller
         $extracted = [];
         foreach ($fields as $field) {
             if ($onlyFilled) {
-                if ($request->has($field)) {
-                    $extracted[$field] = $request->input($field);
-                }
+                if ($request->has($field)) $extracted[$field] = $request->input($field);
             } else {
                 $extracted[$field] = $request->input($field);
             }
@@ -474,6 +430,18 @@ class LandController extends Controller
                 ['value' => (float) $value]
             );
         }
+
+        $this->syncCurrentLandValue($land);
+    }
+
+    private function syncCurrentLandValue(Land $land): void
+    {
+        $latest = $land->valuations()
+            ->orderByDesc('year')
+            ->orderByDesc('month')
+            ->first();
+
+        $land->updateQuietly(['current_land_value' => $latest?->value]);
     }
 
     private function coreRules(bool $creating = true): array
@@ -488,7 +456,7 @@ class LandController extends Controller
             'description'         => 'nullable|string|max:2000',
             'geometry'            => "{$req}|array",
             'geometry.type'       => ($creating ? 'required' : 'required_with:geometry') . '|in:Point,Polygon',
-            'price_per_unit_kobo' => "{$req}|integer|min:1",
+            'price_per_unit_kobo' => $creating ? 'required|integer|min:1' : 'sometimes|integer|min:1',
             'images'              => 'nullable|array|max:10',
             'images.*'            => 'image|max:5120',
         ];
