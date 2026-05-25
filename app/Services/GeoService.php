@@ -44,12 +44,18 @@ class GeoService
     /**
      * Compute the centroid (lat, lng) of a GeoJSON Polygon.
      *
-     * Uses the simple average of all outer ring vertex coordinates.
-     * For small land parcels this is accurate enough; for large/irregular
-     * polygons consider offloading to PostGIS ST_Centroid.
+     * Uses the simple average of all unique outer ring vertices.
+     * GeoJSON rings repeat the first vertex at the end to close the ring;
+     * that duplicate is excluded before averaging to avoid biasing the result
+     * toward the first vertex.
+     *
+     * For large or heavily irregular polygons consider offloading to
+     * PostGIS ST_Centroid instead.
      *
      * @param  array  $polygonCoords  GeoJSON coordinate array  [ [ [lng,lat], … ] ]
      * @return array{lat: float, lng: float}
+     *
+     * @throws \InvalidArgumentException
      */
     public function polygonCentroid(array $polygonCoords): array
     {
@@ -59,9 +65,13 @@ class GeoService
             throw new \InvalidArgumentException('Polygon outer ring is empty.');
         }
 
+        if (count($outerRing) > 1 && $outerRing[0] === $outerRing[count($outerRing) - 1]) {
+            array_pop($outerRing);
+        }
+
+        $count  = count($outerRing);
         $sumLng = array_sum(array_column($outerRing, 0));
         $sumLat = array_sum(array_column($outerRing, 1));
-        $count  = count($outerRing);
 
         return [
             'lat' => $sumLat / $count,
@@ -70,7 +80,8 @@ class GeoService
     }
 
     /**
-     * Build a PostGIS ST_MakeEnvelope expression for a bounding-box query.
+     * Build a PostGIS expression that matches geometries overlapping a
+     * bounding box. Used inside whereRaw() calls.
      *
      * @param  float  $minLng  West
      * @param  float  $minLat  South
@@ -86,7 +97,7 @@ class GeoService
         float $maxLat,
         int   $srid = 4326
     ): string {
-        return "ST_Within(coordinates, ST_MakeEnvelope({$minLng}, {$minLat}, {$maxLng}, {$maxLat}, {$srid}))";
+        return "ST_Intersects(coordinates, ST_MakeEnvelope({$minLng}, {$minLat}, {$maxLng}, {$maxLat}, {$srid}))";
     }
 
     /**
@@ -138,8 +149,19 @@ class GeoService
             if (! is_array($coords) || empty($coords[0])) {
                 throw new \InvalidArgumentException('Polygon must have at least one ring.');
             }
-            foreach ($coords[0] as $vertex) {
-                $this->assertLngLat((float) $vertex[0], (float) $vertex[1]);
+
+            foreach ($coords as $ringIndex => $ring) {
+                if (! is_array($ring) || empty($ring)) {
+                    throw new \InvalidArgumentException("Polygon ring {$ringIndex} is empty.");
+                }
+                foreach ($ring as $vertex) {
+                    if (! is_array($vertex) || count($vertex) < 2) {
+                        throw new \InvalidArgumentException(
+                            "Ring {$ringIndex} contains a vertex with fewer than 2 coordinates."
+                        );
+                    }
+                    $this->assertLngLat((float) $vertex[0], (float) $vertex[1]);
+                }
             }
         }
     }
@@ -156,13 +178,19 @@ class GeoService
         return "POINT({$lng} {$lat})";
     }
 
+    /**
+     * Convert a GeoJSON coordinate ring array to a WKT POLYGON string.
+     */
     private function polygonToWkt(array $rings): string
     {
         $ringStrings = array_map(function (array $ring) {
-            $vertices = array_map(
-                fn ($v) => "{$v[0]} {$v[1]}",
-                $ring
-            );
+            // Close the ring if the client omitted the closing vertex.
+            if (! empty($ring) && $ring[0] !== end($ring)) {
+                $ring[] = $ring[0];
+            }
+
+            $vertices = array_map(fn ($v) => "{$v[0]} {$v[1]}", $ring);
+
             return '(' . implode(', ', $vertices) . ')';
         }, $rings);
 

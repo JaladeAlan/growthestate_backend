@@ -60,16 +60,14 @@ class LandController extends Controller
             throw ValidationException::withMessages(['bbox' => $e->getMessage()]);
         }
 
-        $bboxExpr = $this->geo->makeBboxExpression(
-            (float) $request->min_lng,
-            (float) $request->min_lat,
-            (float) $request->max_lng,
-            (float) $request->max_lat
-        );
-
         $lands = Land::with(['images', 'latestPrice'])
             ->whereNotNull('coordinates')
-            ->whereRaw($bboxExpr)
+            ->withinBounds(
+                north: (float) $request->max_lat,
+                south: (float) $request->min_lat,
+                east:  (float) $request->max_lng,
+                west:  (float) $request->min_lng,
+            )
             ->get(['id', 'title', 'lat', 'lng', 'available_units', 'is_available']);
 
         return response()->json(['success' => true, 'data' => $lands]);
@@ -80,7 +78,8 @@ class LandController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations']),
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations'])
+                              ->withGeometry(),
         ]);
     }
 
@@ -120,10 +119,24 @@ class LandController extends Controller
         return response()->json(['success' => true, 'data' => $lands]);
     }
 
+    // GET /admin/lands/{id}  — used by the edit form
+    public function adminShow(Land $land)
+    {
+        return response()->json([
+            'success' => true,
+            'data'    => $land->load(['images', 'latestPrice', 'priceHistory', 'valuations'])
+                              ->withGeometry(),
+        ]);
+    }
+
     // POST /admin/lands
     public function store(Request $request)
     {
-        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history', 'neighbouring_transactions']);
+        $this->decodeJsonStrings($request, [
+            'geometry', 'allocation_records', 'land_titles',
+            'historical_transactions', 'comm_lines', 'valuation_history',
+            'neighbouring_transactions',
+        ]);
 
         $request->validate([
             ...$this->coreRules(),
@@ -174,7 +187,11 @@ class LandController extends Controller
     // POST /admin/lands/{id}
     public function update(Request $request, Land $land)
     {
-        $this->decodeJsonStrings($request, ['geometry', 'allocation_records', 'land_titles', 'historical_transactions', 'comm_lines', 'valuation_history', 'neighbouring_transactions']);
+        $this->decodeJsonStrings($request, [
+            'geometry', 'allocation_records', 'land_titles',
+            'historical_transactions', 'comm_lines', 'valuation_history',
+            'neighbouring_transactions',
+        ]);
 
         $request->validate([
             ...$this->coreRules(creating: false),
@@ -191,12 +208,16 @@ class LandController extends Controller
             }
 
             [$centerLat, $centerLng, $wkt] = $this->resolveGeometry($request->geometry);
-            $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
-            $updates['lat']         = $centerLat;
-            $updates['lng']         = $centerLng;
+
+            $updates['coordinates'] = DB::raw(
+                DB::connection()->getPdo()->quote("ST_GeomFromText('{$wkt}', 4326)")
+            );
+
+            $updates['lat'] = $centerLat;
+            $updates['lng'] = $centerLng;
         }
 
-        foreach (['title', 'location', 'size', 'description'] as $field) {
+        foreach (['title', 'location', 'size', 'total_units', 'description', 'is_available'] as $field) {
             if ($request->has($field)) $updates[$field] = $request->input($field);
         }
 
@@ -212,6 +233,15 @@ class LandController extends Controller
                     $path = $image->store('lands', 'r2');
                     $land->images()->create(['image_path' => $path]);
                 }
+            }
+
+            if ($request->has('remove_images')) {
+                $land->images()
+                    ->whereIn('id', $request->input('remove_images', []))
+                    ->each(function ($img) {
+                        \Illuminate\Support\Facades\Storage::disk('r2')->delete($img->image_path);
+                        $img->delete();
+                    });
             }
         });
 
@@ -264,7 +294,7 @@ class LandController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // VALUATION HISTORY — each year+month is its own row in land_valuations
+    // VALUATION HISTORY
     // ─────────────────────────────────────────────────────────────────────────
 
     // GET /admin/lands/{id}/valuation
@@ -300,7 +330,6 @@ class LandController extends Controller
             'value' => $request->value,
         ]);
 
-        $this->syncCurrentLandValue($land);
         $this->clearLandCache();
 
         return response()->json([
@@ -330,7 +359,6 @@ class LandController extends Controller
 
         $entry->update(['value' => $request->value]);
 
-        $this->syncCurrentLandValue($land);
         $this->clearLandCache();
 
         return response()->json([
@@ -354,7 +382,6 @@ class LandController extends Controller
             ]);
         }
 
-        $this->syncCurrentLandValue($land);
         $this->clearLandCache();
 
         return response()->json([
@@ -367,9 +394,6 @@ class LandController extends Controller
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Decode named fields from JSON strings — needed for multipart/form-data.
-     */
     private function decodeJsonStrings(Request $request, array $fields): void
     {
         foreach ($fields as $field) {
@@ -382,9 +406,6 @@ class LandController extends Controller
         }
     }
 
-    /**
-     * Resolve a GeoJSON geometry into [lat, lng, wkt].
-     */
     private function resolveGeometry(array $geometry): array
     {
         $wkt = $this->geo->toWkt($geometry);
@@ -397,9 +418,6 @@ class LandController extends Controller
         return [$geometry['coordinates'][1], $geometry['coordinates'][0], $wkt];
     }
 
-    /**
-     * Extract core land fields for Land::create().
-     */
     private function extractCoreFields(Request $request, string $wkt, ?float $lat, ?float $lng): array
     {
         return [
@@ -419,24 +437,18 @@ class LandController extends Controller
     private function extractDetailFields(Request $request, bool $onlyFilled = false): array
     {
         $fields = [
-            // Administrative
             'plot_identifier', 'tenure', 'lga', 'city', 'state',
-            // Ownership & legal
             'current_owner', 'dispute_status', 'taxation',
             'allocation_records', 'land_titles', 'historical_transactions',
-            // Land use
             'preexisting_landuse', 'current_landuse', 'proposed_landuse',
             'zoning', 'dev_control',
-            // Geospatial & physical
             'slope', 'elevation', 'soil_type', 'bearing_capacity',
             'hydrology', 'vegetation',
-            // Infrastructure & utilities
             'road_type', 'road_category', 'road_condition',
             'electricity', 'water_supply', 'sewage', 'other_facilities',
             'comm_lines',
             'neighbouring_transactions',
-            // Valuation & fiscal
-            'overall_value', 'current_land_value', 'rental_pm', 'rental_pa', 
+            'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
         ];
 
         $extracted = [];
@@ -453,10 +465,6 @@ class LandController extends Controller
         return $extracted;
     }
 
-    /**
-     * Upsert valuation history rows into land_valuations.
-     * Accepts [[year, month, value], ...] format from the request.
-     */
     private function syncValuations(Land $land, array $history): void
     {
         foreach ($history as $entry) {
@@ -466,29 +474,8 @@ class LandController extends Controller
                 ['value' => (float) $value]
             );
         }
-
-        $this->syncCurrentLandValue($land);
     }
 
-    /**
-     * Keep current_land_value in sync with the most recent land_valuations row
-     * (ordered by year desc, then month desc).
-     */
-    private function syncCurrentLandValue(Land $land): void
-    {
-        $latest = $land->valuations()
-            ->orderByDesc('year')
-            ->orderByDesc('month')
-            ->first();
-
-        $land->updateQuietly([
-            'current_land_value' => $latest?->value,
-        ]);
-    }
-
-    /**
-     * Validation rules for core land fields.
-     */
     private function coreRules(bool $creating = true): array
     {
         $req = $creating ? 'required' : 'sometimes';
@@ -507,20 +494,15 @@ class LandController extends Controller
         ];
     }
 
-    /**
-     * Validation rules for all detail fields.
-     */
     private function detailRules(): array
     {
         return [
-            // Administrative
             'plot_identifier' => 'nullable|string|max:300',
             'tenure'          => 'nullable|string|max:100',
             'lga'             => 'nullable|string|max:100',
             'city'            => 'nullable|string|max:100',
             'state'           => 'nullable|string|max:100',
 
-            // Ownership & legal
             'current_owner'           => 'nullable|string|max:200',
             'dispute_status'          => 'nullable|string|max:200',
             'taxation'                => 'nullable|string|max:200',
@@ -528,14 +510,12 @@ class LandController extends Controller
             'land_titles'             => 'nullable|array',
             'historical_transactions' => 'nullable|array',
 
-            // Land use
             'preexisting_landuse' => 'nullable|string|max:100',
             'current_landuse'     => 'nullable|string|max:100',
             'proposed_landuse'    => 'nullable|string|max:100',
             'zoning'              => 'nullable|string|max:200',
             'dev_control'         => 'nullable|string|max:200',
 
-            // Geospatial & physical
             'slope'            => 'nullable|numeric',
             'elevation'        => 'nullable|numeric',
             'soil_type'        => 'nullable|string|max:100',
@@ -543,7 +523,6 @@ class LandController extends Controller
             'hydrology'        => 'nullable|string|max:100',
             'vegetation'       => 'nullable|string|max:100',
 
-            // Infrastructure & utilities
             'road_type'        => 'nullable|string|max:100',
             'road_category'    => 'nullable|string|max:100',
             'road_condition'   => 'nullable|string|max:100',
@@ -552,32 +531,27 @@ class LandController extends Controller
             'sewage'           => 'nullable|string|max:100',
             'other_facilities' => 'nullable|string|max:300',
             'comm_lines'       => 'nullable|array',
-            'comm_lines.*.0'   => 'nullable|string|max:50',
+            'comm_lines.*.0'   => 'nullable|string|in:MTN,GLO,Airtel,Etisalat',
             'comm_lines.*.1'   => 'nullable|integer|min:0|max:100',
 
-            // Valuation & fiscal
             'overall_value'      => 'nullable|numeric',
             'current_land_value' => 'nullable|numeric',
             'rental_pm'          => 'nullable|numeric',
             'rental_pa'          => 'nullable|numeric',
 
-            'neighbouring_transactions'             => 'nullable|array',
-            'neighbouring_transactions.*.plot_size' => 'nullable|numeric|min:0',
-            'neighbouring_transactions.*.year'      => 'nullable|integer|min:1900|max:2100',
-            'neighbouring_transactions.*.value'     => 'nullable|numeric|min:0',
-            'neighbouring_transactions.*.distance_m'=> 'nullable|numeric|min:0',
+            'neighbouring_transactions'              => 'nullable|array',
+            'neighbouring_transactions.*.plot_size'  => 'nullable|numeric|min:0',
+            'neighbouring_transactions.*.year'       => 'nullable|integer|min:1900|max:2100',
+            'neighbouring_transactions.*.value'      => 'nullable|numeric|min:0',
+            'neighbouring_transactions.*.distance_m' => 'nullable|numeric|min:0',
 
-            // Valuation history — [[year, month, value], ...]
-            'valuation_history'       => 'nullable|array',
-            'valuation_history.*.0'   => 'nullable|integer|min:1900|max:2100', // year
-            'valuation_history.*.1'   => 'nullable|integer|min:1|max:12',      // month
-            'valuation_history.*.2'   => 'nullable|numeric|min:0',             // value
+            'valuation_history'     => 'nullable|array',
+            'valuation_history.*.0' => 'nullable|integer|min:1900|max:2100',
+            'valuation_history.*.1' => 'nullable|integer|min:1|max:12',
+            'valuation_history.*.2' => 'nullable|numeric|min:0',
         ];
     }
 
-    /**
-     * Flush both land caches.
-     */
     private function clearLandCache(): void
     {
         Cache::forget('lands.public');

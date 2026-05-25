@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use App\Services\GeoService;
 
 class Land extends Model
 {
@@ -37,7 +38,7 @@ class Land extends Model
         'comm_lines',
 
         'neighbouring_transactions',
-        
+
         // ── Valuation & fiscal ─────────────────────────────────────────────
         'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
     ];
@@ -56,10 +57,10 @@ class Land extends Model
         'is_available'    => 'boolean',
 
         // ── JSON columns ───────────────────────────────────────────────────
-        'allocation_records'      => 'array',
-        'land_titles'             => 'array',
-        'historical_transactions' => 'array',
-        'comm_lines'              => 'array',
+        'allocation_records'        => 'array',
+        'land_titles'               => 'array',
+        'historical_transactions'   => 'array',
+        'comm_lines'                => 'array',
         'neighbouring_transactions' => 'array',
 
         // ── Numeric ────────────────────────────────────────────────────────
@@ -76,7 +77,6 @@ class Land extends Model
         'sold_percentage',
         'map_color',
         'current_price_per_unit_kobo',
-        'geometry_geojson',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ class Land extends Model
     public function latestPrice()
     {
         return $this->hasOne(LandPriceHistory::class)
-            ->where('price_date', '<=', now()->toDateString())
+            ->whereColumn('price_date', '<=', DB::raw('CURRENT_DATE'))
             ->orderByDesc('price_date')
             ->orderByDesc('created_at');
     }
@@ -159,16 +159,15 @@ class Land extends Model
             default                     => 'red',
         };
     }
-
-    /**
-     * Returns the coordinates column as a decoded GeoJSON array.
-     * Appended automatically to every serialised Land instance so the
-     * frontend edit form can read geometry_geojson without touching the
-     * raw WKB hex in `coordinates`.
-     */
+    
     public function getGeometryGeojsonAttribute(): ?array
     {
         return $this->fetchGeojson();
+    }
+
+    public function withGeometry(): static
+    {
+        return $this->append('geometry_geojson');
     }
 
     /**
@@ -195,9 +194,11 @@ class Land extends Model
         float $east,
         float $west
     ): Builder {
+        /** @var GeoService $geo */
+        $geo = app(GeoService::class);
+
         return $query->whereRaw(
-            'coordinates && ST_MakeEnvelope(?, ?, ?, ?, 4326)',
-            [$west, $south, $east, $north]
+            $geo->makeBboxExpression($west, $south, $east, $north)
         );
     }
 }

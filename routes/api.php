@@ -250,7 +250,7 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
 
     // ── Lands ─────────────────────────────────────────────────────────────────
     Route::get('/lands',                       [LandController::class, 'adminIndex']);
-    Route::get('/lands/{land}',                [LandController::class, 'show']);
+    Route::get('/lands/{land}',                [LandController::class, 'adminShow']);
     Route::post('/lands',                      [LandController::class, 'store']);
     Route::post('/lands/{land}',               [LandController::class, 'update']);
     Route::patch('/lands/{land}/price',        [LandController::class, 'updatePrice']);
