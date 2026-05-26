@@ -407,6 +407,7 @@ class LandController extends Controller
             'comm_lines',
             'neighbouring_transactions',
             'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
+            'pre_launch_price_kobo', 'launch_price_kobo',
         ];
 
         $extracted = [];
@@ -494,6 +495,9 @@ class LandController extends Controller
             'current_land_value' => 'nullable|numeric',
             'rental_pm'          => 'nullable|numeric',
             'rental_pa'          => 'nullable|numeric',
+
+            'pre_launch_price_kobo' => 'nullable|integer|min:0',
+            'launch_price_kobo'     => 'nullable|integer|min:0',
 
             'neighbouring_transactions'              => 'nullable|array',
             'neighbouring_transactions.*.plot_size'  => 'nullable|numeric|min:0',

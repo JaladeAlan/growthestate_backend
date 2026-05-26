@@ -41,6 +41,8 @@ class Land extends Model
 
         // ── Valuation & fiscal ─────────────────────────────────────────────
         'overall_value', 'current_land_value', 'rental_pm', 'rental_pa',
+
+        'advert_price_kobo', 'pre_launch_price_kobo', 'launch_price_kobo',
     ];
 
     protected $attributes = [
@@ -70,6 +72,9 @@ class Land extends Model
         'current_land_value' => 'float',
         'rental_pm'          => 'float',
         'rental_pa'          => 'float',
+
+        'pre_launch_price_kobo' => 'integer',
+        'launch_price_kobo'     => 'integer',
     ];
 
     protected $appends = [
