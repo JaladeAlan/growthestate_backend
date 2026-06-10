@@ -9,6 +9,8 @@ use App\Services\GeoService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class LandController extends Controller
@@ -157,8 +159,9 @@ class LandController extends Controller
 
             if ($request->hasFile('images')) {
                 foreach ($request->file('images') as $image) {
-                    $path = $image->store('lands', 'r2');
-                    $land->images()->create(['image_path' => $path]);
+                    $land->images()->create([
+                        'image_path' => $this->uploadImage($image),
+                    ]);
                 }
             }
 
@@ -198,9 +201,6 @@ class LandController extends Controller
 
             [$centerLat, $centerLng, $wkt] = $this->resolveGeometry($request->geometry);
 
-            // ✅ DB::raw() must NOT be wrapped with PDO::quote() — that turns
-            //    the expression into a plain string literal and breaks PostGIS.
-            //    Use the same pattern as extractCoreFields() in store().
             $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
             $updates['lat']         = $centerLat;
             $updates['lng']         = $centerLng;
@@ -219,8 +219,9 @@ class LandController extends Controller
 
             if ($request->hasFile('images')) {
                 foreach ($request->file('images') as $image) {
-                    $path = $image->store('lands', 'r2');
-                    $land->images()->create(['image_path' => $path]);
+                    $land->images()->create([
+                        'image_path' => $this->uploadImage($image),
+                    ]);
                 }
             }
 
@@ -228,7 +229,7 @@ class LandController extends Controller
                 $land->images()
                     ->whereIn('id', $request->input('remove_images', []))
                     ->each(function ($img) {
-                        \Illuminate\Support\Facades\Storage::disk('r2')->delete($img->image_path);
+                        Storage::disk('r2')->delete($img->image_path);
                         $img->delete();
                     });
             }
@@ -351,6 +352,18 @@ class LandController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────────
+
+    private function uploadImage(\Illuminate\Http\UploadedFile $image): string
+    {
+        $path = 'lands/' . Str::uuid() . '.' . $image->getClientOriginalExtension();
+
+        Storage::disk('r2')->put($path, file_get_contents($image), [
+            'ContentType'  => $image->getMimeType(),
+            'CacheControl' => 'public, max-age=31536000, immutable',
+        ]);
+
+        return $path;
+    }
 
     private function decodeJsonStrings(Request $request, array $fields): void
     {
