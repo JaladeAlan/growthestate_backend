@@ -162,6 +162,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Transactions ──────────────────────────────────────────────────────
         Route::get('/transactions/user',      [TransactionController::class, 'userTransactions']);
+        Route::get('/lands/{land}/purchase/preview', [PurchaseController::class, 'preview']);
         Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase']);
         Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits']);
 
