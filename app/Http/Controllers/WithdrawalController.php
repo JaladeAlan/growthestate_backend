@@ -198,9 +198,11 @@ class WithdrawalController extends Controller
     // GET /api/withdrawals/{reference}
     // ─────────────────────────────────────────────────────────────────────────
 
-    public function getWithdrawalStatus(string $reference)
+    public function getWithdrawalStatus(Request $request, string $reference)
     {
-        $withdrawal = Withdrawal::firstWhere('reference', $reference);
+        $withdrawal = Withdrawal::where('reference', $reference)
+            ->where('user_id', $request->user()->id)
+            ->first();
 
         if (! $withdrawal) {
             return response()->json(['error' => 'Not found.'], 404);

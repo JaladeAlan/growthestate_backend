@@ -76,20 +76,10 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
-        // Rate limit: 5 registrations per hour per IP
-        $ipKey = 'register:' . $request->ip();
-
-        if (RateLimiter::tooManyAttempts($ipKey, 5)) {
-            return response()->json([
-                'message'     => 'Too many registration attempts from this IP. Please try again later.',
-                'retry_after' => RateLimiter::availableIn($ipKey),
-            ], 429);
-        }
-
         try {
             $request->validate([
                 'name'          => 'required|string|max:255',
-                'email'         => 'required|string|email|max:255|unique:users',
+                'email'         => 'required|string|email|max:255',
                 'password'      => [
                     'required', 'string', 'min:8',
                     'regex:/[A-Z]/', 'regex:/[a-z]/',
@@ -100,6 +90,21 @@ class AuthController extends Controller
             ]);
         } catch (ValidationException $e) {
             return $this->sendErrorResponse('Validation errors occurred', 422, $e->validator->errors());
+        }
+
+        // Email uniqueness is checked separately (not via the 'unique:users'
+        // validation rule) so an already-registered email doesn't return a
+        // distinguishable response — that would let an attacker enumerate
+        // registered accounts. Registration is still bounded by the
+        // throttle:5,60 route middleware regardless of outcome.
+        if (User::where('email', $request->email)->exists()) {
+            Log::info('Registration attempted with existing email', ['email' => $request->email]);
+
+            return $this->sendSuccessResponse(
+                null,
+                'If this email is not already registered, check your inbox for a verification code.',
+                201
+            );
         }
 
         try {
@@ -131,9 +136,6 @@ class AuthController extends Controller
             $user->save();
 
             $token = JWTAuth::fromUser($user);
-
-            // Count this IP hit only after a successful registration
-            RateLimiter::hit($ipKey, 3600);
 
             try {
                 MailService::queue(new VerifyEmailMail($user, $verificationCode), $user->email);
@@ -191,17 +193,19 @@ class AuthController extends Controller
             return $this->sendErrorResponse('Invalid credentials', 401);
         }
 
-        if (! $user->hasVerifiedEmail()) {
-            return $this->sendErrorResponse('Please verify your email before logging in.', 403);
-        }
-
         try {
             if (! $token = JWTAuth::attempt($credentials)) {
                 RateLimiter::hit($key, 900);
+                // Intentionally vague to prevent user enumeration
                 return $this->sendErrorResponse('Invalid credentials', 401);
             }
         } catch (JWTException $e) {
             return $this->sendErrorResponse('Could not create token', 500, ['exception' => $e->getMessage()]);
+        }
+
+        // Password is correct — now safe to reveal verification status.
+        if (! $user->hasVerifiedEmail()) {
+            return $this->sendErrorResponse('Please verify your email before logging in.', 403);
         }
 
         // Clear the limiter on successful login
