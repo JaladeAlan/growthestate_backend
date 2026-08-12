@@ -236,6 +236,52 @@ describe('Admin withdrawal approval', function () {
         );
     });
 
+    it('marks the withdrawal as failed (not pending) when the Paystack transfer call errors, so it cannot be silently re-approved', function () {
+        Http::fake([
+            'api.paystack.co/transferrecipient' => Http::response([
+                'status' => true,
+                'data'   => ['recipient_code' => 'RCP_test123'],
+            ], 200),
+            'api.paystack.co/transfer' => Http::response([
+                'status'  => false,
+                'message' => 'Insufficient balance in Paystack account.',
+            ], 400),
+        ]);
+
+        $admin = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_admin'          => true,
+        ]);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'pending',
+            'reference'   => 'WD-FAIL-001',
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson("/api/admin/withdrawals/{$withdrawal->id}/approve");
+
+        $response->assertStatus(502);
+
+        // The withdrawal must land on 'failed', never bounce back to
+        // 'pending' — a row stuck at 'pending' after a Paystack error is
+        // eligible for a second approval click, which could double-transfer
+        // funds if the first call actually reached Paystack before failing.
+        $this->assertDatabaseHas('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'failed',
+        ]);
+
+        $this->assertDatabaseMissing('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'pending',
+        ]);
+    });
+
     it('rejects a pending withdrawal and refunds the user balance', function () {
         Notification::fake();
 

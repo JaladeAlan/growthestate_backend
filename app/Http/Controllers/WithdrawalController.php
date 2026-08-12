@@ -256,6 +256,15 @@ class WithdrawalController extends Controller
     {
         $admin = $request->user();
 
+        // Step 1: flip pending -> processing and COMMIT before touching
+        // Paystack. This must be its own transaction so that if the Paystack
+        // call throws, rolling back the *next* transaction can't also undo
+        // this status change. (Previously the whole flow — including the
+        // eventual "mark as failed" write — lived in one transaction, so an
+        // exception from the HTTP call rolled everything back to 'pending',
+        // silently discarding the failure record and leaving the withdrawal
+        // eligible for re-approval — a possible double-transfer if Paystack
+        // had actually received the transfer before the exception.)
         DB::transaction(function () use ($id, $admin) {
             $withdrawal = Withdrawal::lockForUpdate()->findOrFail($id);
 
@@ -263,46 +272,53 @@ class WithdrawalController extends Controller
                 abort(422, "Withdrawal is already {$withdrawal->status}. Only pending withdrawals can be approved.");
             }
 
-            // Mark as processing before touching Paystack so the status is
-            // never left as 'pending' if the API call partially succeeds.
             $withdrawal->update([
                 'status'      => 'processing',
                 'reviewed_by' => $admin->id,
                 'reviewed_at' => now(),
             ]);
-
-            try {
-                $this->initiatePaystackTransfer(
-                    $withdrawal->user,
-                    $withdrawal->amount_kobo,
-                    $withdrawal->reference
-                );
-
-                Log::info('Withdrawal approved and transfer initiated', [
-                    'withdrawal_id' => $withdrawal->id,
-                    'reference'     => $withdrawal->reference,
-                    'approved_by'   => $admin->id,
-                ]);
-
-                \App\Models\AdminActionLog::record($admin, 'withdrawal.approve', 'Withdrawal', $withdrawal->id, ['amount_kobo' => $withdrawal->amount_kobo], request()->ip());
-
-            } catch (\Exception $e) {
-                // Paystack call failed — mark as failed so it appears in the
-                // admin queue for manual follow-up. Do NOT auto-refund here;
-                // the transfer may have reached Paystack before the exception.
-                // Admin must verify on Paystack dashboard before rejecting.
-                $withdrawal->update(['status' => 'failed']);
-
-                Log::error('Withdrawal approval: Paystack transfer failed', [
-                    'withdrawal_id' => $withdrawal->id,
-                    'reference'     => $withdrawal->reference,
-                    'error'         => $e->getMessage(),
-                    'approved_by'   => $admin->id,
-                ]);
-
-                abort(502, 'Transfer initiation failed. Withdrawal marked as failed — verify on Paystack before rejecting.');
-            }
         });
+
+        // Step 2: the external call, outside any DB transaction, so its
+        // outcome can never be rolled back by a later DB error.
+        try {
+            $withdrawal = Withdrawal::findOrFail($id);
+
+            $this->initiatePaystackTransfer(
+                $withdrawal->user,
+                $withdrawal->amount_kobo,
+                $withdrawal->reference
+            );
+
+            Log::info('Withdrawal approved and transfer initiated', [
+                'withdrawal_id' => $withdrawal->id,
+                'reference'     => $withdrawal->reference,
+                'approved_by'   => $admin->id,
+            ]);
+
+            \App\Models\AdminActionLog::record($admin, 'withdrawal.approve', 'Withdrawal', $withdrawal->id, ['amount_kobo' => $withdrawal->amount_kobo], request()->ip());
+
+        } catch (\Exception $e) {
+            // Step 3: record the failure in its own transaction, scoped by
+            // the 'processing' status so it can't clobber a status that
+            // changed for some other reason in the meantime. Do NOT
+            // auto-refund here — the transfer may have reached Paystack
+            // before the exception. Admin must verify on the Paystack
+            // dashboard before rejecting.
+            DB::transaction(function () use ($id) {
+                Withdrawal::where('id', $id)
+                    ->where('status', 'processing')
+                    ->update(['status' => 'failed']);
+            });
+
+            Log::error('Withdrawal approval: Paystack transfer failed', [
+                'withdrawal_id' => $id,
+                'error'         => $e->getMessage(),
+                'approved_by'   => $admin->id,
+            ]);
+
+            abort(502, 'Transfer initiation failed. Withdrawal marked as failed — verify on Paystack before rejecting.');
+        }
 
         return response()->json([
             'success' => true,
@@ -368,14 +384,20 @@ class WithdrawalController extends Controller
         $results = ['approved' => [], 'failed' => []];
 
         foreach ($pending as $withdrawal) {
-            // Each withdrawal gets its own transaction so one failure doesn't
-            // roll back the others.
+            // Step 1: flip pending -> processing and commit, in its own
+            // transaction, BEFORE calling Paystack. Keeping this separate
+            // from the external call means a later failure can never roll
+            // this status change back out from under us (see adminApprove
+            // for the full explanation — same bug, same fix, applied here).
+            $locked = null;
+
             try {
-                DB::transaction(function () use ($withdrawal, $admin) {
+                DB::transaction(function () use ($withdrawal, $admin, &$locked) {
                     $locked = Withdrawal::lockForUpdate()->find($withdrawal->id);
 
                     // Skip if status changed between the query and the lock
                     if ($locked->status !== 'pending') {
+                        $locked = null;
                         return;
                     }
 
@@ -384,13 +406,18 @@ class WithdrawalController extends Controller
                         'reviewed_by' => $admin->id,
                         'reviewed_at' => now(),
                     ]);
-
-                    $this->initiatePaystackTransfer(
-                        $withdrawal->user,
-                        $locked->amount_kobo,
-                        $locked->reference
-                    );
                 });
+
+                if ($locked === null) {
+                    continue;
+                }
+
+                // Step 2: external call, outside any DB transaction.
+                $this->initiatePaystackTransfer(
+                    $withdrawal->user,
+                    $locked->amount_kobo,
+                    $locked->reference
+                );
 
                 $results['approved'][] = $withdrawal->reference;
 
@@ -400,10 +427,14 @@ class WithdrawalController extends Controller
                 ]);
 
             } catch (\Exception $e) {
-                // Mark as failed so it's visible in admin queue
-                Withdrawal::where('id', $withdrawal->id)
-                    ->where('status', 'processing')
-                    ->update(['status' => 'failed']);
+                // Step 3: record the failure in its own transaction, scoped
+                // by the 'processing' status. Do NOT auto-refund — the
+                // transfer may have reached Paystack before the exception.
+                DB::transaction(function () use ($withdrawal) {
+                    Withdrawal::where('id', $withdrawal->id)
+                        ->where('status', 'processing')
+                        ->update(['status' => 'failed']);
+                });
 
                 $results['failed'][] = [
                     'reference' => $withdrawal->reference,

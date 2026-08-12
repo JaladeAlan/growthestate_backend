@@ -42,6 +42,9 @@ return Application::configure(basePath: dirname(__DIR__))
     
             // Rate limiting
             'throttle.sensitive' => \App\Http\Middleware\ThrottleSensitiveRequests::class,
+
+            // Audit / request logging
+            'audit.log'          => \App\Http\Middleware\LogSensitiveRequests::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
