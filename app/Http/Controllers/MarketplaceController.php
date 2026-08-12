@@ -100,12 +100,15 @@ class MarketplaceController extends Controller
 
             $owned = $holding ? (int) $holding->units : 0;
 
-            // Lock listings too so concurrent requests can't over-commit units
+            // Lock listings too so concurrent requests can't over-commit units.
+            // (Postgres rejects FOR UPDATE combined with an aggregate, so lock
+            // the rows first and sum in PHP rather than SUM(...)->lockForUpdate().)
             $alreadyListed = MarketplaceListing::where('seller_id', $user->id)
                 ->where('land_id', $data['land_id'])
                 ->where('status', 'active')
                 ->lockForUpdate()
-                ->sum('units_for_sale');
+                ->pluck('units_for_sale')
+                ->sum();
 
             $available = $owned - $alreadyListed;
 

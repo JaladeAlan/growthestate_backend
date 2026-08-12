@@ -31,9 +31,10 @@ class PaystackWebhookController extends Controller
 
         match ($event) {
             'charge.success'     => $this->handleChargeSuccess($request->input('data')),
-            'transfer.success'   => Log::info('Paystack transfer.success', ['ref' => $request->input('data.reference')]),
-            'transfer.failed'    => Log::warning('Paystack transfer.failed', ['ref' => $request->input('data.reference')]),
-            'transfer.reversed'  => Log::warning('Paystack transfer.reversed', ['ref' => $request->input('data.reference')]),
+            'transfer.success',
+            'transfer.failed',
+            'transfer.reversed'  => app(\App\Http\Controllers\WithdrawalController::class)
+                                        ->handlePaystackCallback($request),
             default              => Log::info('Unhandled Paystack event', ['event' => $event]),
         };
 

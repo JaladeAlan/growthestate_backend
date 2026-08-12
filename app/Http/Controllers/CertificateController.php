@@ -21,7 +21,7 @@ class CertificateController extends Controller
             'success' => true,
             'data'    => Certificate::where('user_id', $request->user()->id)
                 ->where('status', 'active')
-                ->paginate(10),
+                ->get(),
         ]);
     }
 
@@ -92,18 +92,16 @@ class CertificateController extends Controller
         Log::info('Certificate verified publicly', ['cert_number' => $certNumber]);
 
         return response()->json([
-            'success' => true,
-            'data'    => [
-                'cert_number'       => $cert->cert_number,
-                'owner_name'        => $cert->owner_name,
-                'units'             => $cert->units,
-                'property_title'    => $cert->property_title,
-                'property_location' => $cert->property_location,
-                'total_invested'    => $cert->total_invested,
-                'issued_at'         => $cert->issued_at,
-                'last_updated_at'   => $cert->last_updated_at ?? null,
-                'status'            => $cert->status,
-            ],
+            'valid'              => $cert->status === 'active',
+            'cert_number'        => $cert->cert_number,
+            'owner_name'         => $cert->owner_name,
+            'units'              => $cert->units,
+            'property_title'     => $cert->property_title,
+            'property_location'  => $cert->property_location,
+            'total_invested'     => $cert->total_invested,
+            'issued_at'          => $cert->issued_at,
+            'last_updated_at'    => $cert->last_updated_at ?? null,
+            'status'             => $cert->status,
         ]);
     }
 

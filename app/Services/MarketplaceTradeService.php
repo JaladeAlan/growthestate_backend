@@ -108,7 +108,7 @@ class MarketplaceTradeService
             $buyer->save();
 
             LedgerEntry::create([
-                'user_id'       => $buyer->id,
+                'uid'           => $buyer->id,
                 'type'          => 'marketplace_purchase',
                 'amount_kobo'   => $totalKobo,
                 'balance_after' => $buyer->balance_kobo,
@@ -120,7 +120,7 @@ class MarketplaceTradeService
             $seller->save();
 
             LedgerEntry::create([
-                'user_id'       => $seller->id,
+                'uid'           => $seller->id,
                 'type'          => 'marketplace_sale',
                 'amount_kobo'   => $sellerGets,
                 'balance_after' => $seller->balance_kobo,
@@ -204,7 +204,7 @@ class MarketplaceTradeService
                     'units'            => $offer->units,
                     'amount_kobo'      => $totalKobo,
                     'status'           => 'completed',
-                    'reference'        => $reference,
+                    'reference'        => $reference . '-BUY',
                     'transaction_date' => now(),
                     'created_at'       => now(),
                     'updated_at'       => now(),
@@ -216,7 +216,7 @@ class MarketplaceTradeService
                     'units'            => $offer->units,
                     'amount_kobo'      => $sellerGets,
                     'status'           => 'completed',
-                    'reference'        => $reference,
+                    'reference'        => $reference . '-SELL',
                     'transaction_date' => now(),
                     'created_at'       => now(),
                     'updated_at'       => now(),

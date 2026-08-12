@@ -92,13 +92,13 @@ class ComplianceController extends Controller
                 'notes'       => $request->notes,
             ]);
 
-        $screening->user->update([
-            'screening_status' => 'blocked',
-            'is_suspended'     => true,
-        ]);
-
-            return response()->json(['success' => true, 'message' => 'User blocked.']);
+            $screening->user->update([
+                'screening_status' => 'blocked',
+                'is_suspended'     => true,
+            ]);
         });
+
+        return response()->json(['success' => true, 'message' => 'User blocked.']);
     }
 
     /**

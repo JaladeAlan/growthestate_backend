@@ -77,9 +77,7 @@ class CertificateService
 
     public function verify(string $certNumber): ?Certificate
     {
-        $cert = Certificate::where('cert_number', $certNumber)
-            ->where('status', 'active')
-            ->first();
+        $cert = Certificate::where('cert_number', $certNumber)->first();
 
         if (! $cert) return null;
 
@@ -89,6 +87,10 @@ class CertificateService
             $cert->owner_name
         );
 
+        // Signature must always check out regardless of status — an
+        // invalid signature means the cert_number/data don't match what
+        // was actually issued, which is worth surfacing distinctly from
+        // "not found".
         return hash_equals($expected, $cert->digital_signature) ? $cert : null;
     }
 

@@ -5,9 +5,9 @@ ENV HOME=/var/www/html
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl zip unzip supervisor \
-    libpng-dev libonig-dev libxml2-dev libzip-dev libpq-dev \
+    libpng-dev libonig-dev libxml2-dev libzip-dev libpq-dev libicu-dev \
     postgresql-client \
-    && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd zip \
+    && docker-php-ext-install pdo pdo_pgsql mbstring exif pcntl bcmath gd zip intl \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && apt-get clean \

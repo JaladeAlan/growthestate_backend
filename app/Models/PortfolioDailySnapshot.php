@@ -49,7 +49,7 @@ class PortfolioDailySnapshot extends Model
      */
     public function assetSnapshots(): HasMany
     {
-        return $this->hasMany(AssetSnapshot::class, 'user_id', 'user_id')
+        return $this->hasMany(PortfolioAssetSnapshot::class, 'user_id', 'user_id')
             ->where('snapshot_date', $this->snapshot_date);
     }
 

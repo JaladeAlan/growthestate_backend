@@ -149,7 +149,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Deposits ──────────────────────────────────────────────────────────
         Route::post('/deposit', [DepositController::class, 'initiateDeposit'])
-            ->middleware('throttle:10,60');
+            ->middleware(['throttle:10,60', 'screening.transact']);
         Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
         Route::get('/paystack/banks',             [DepositController::class, 'banks']);
         Route::post('/paystack/resolve-account',  [DepositController::class, 'resolveAccount'])
@@ -157,14 +157,16 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Withdrawals ───────────────────────────────────────────────────────
         Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
-            ->middleware('throttle:5,60');
+            ->middleware(['throttle:5,60', 'screening.transact']);
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // ── Transactions ──────────────────────────────────────────────────────
         Route::get('/transactions/user',      [TransactionController::class, 'userTransactions']);
         Route::get('/lands/{land}/purchase/preview', [PurchaseController::class, 'preview']);
-        Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase']);
-        Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits']);
+        Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase'])
+            ->middleware(['screening.transact', 'suspended', 'check.pin']);
+        Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits'])
+            ->middleware(['screening.transact', 'suspended', 'check.pin']);
 
         // ── Portfolio ─────────────────────────────────────────────────────────
         Route::get('/portfolio/summary',     [PortfolioController::class, 'summary']);

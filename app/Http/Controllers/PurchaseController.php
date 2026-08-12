@@ -340,7 +340,7 @@ class PurchaseController extends Controller
             }
         }
 
-        return response()->json($responseData);
+        return response()->json(array_merge(['success' => true], $responseData));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -364,7 +364,13 @@ class PurchaseController extends Controller
                 $purchase = Purchase::where('user_id', $user->id)
                     ->where('land_id', $landId)
                     ->lockForUpdate()
-                    ->firstOrFail();
+                    ->first();
+
+                if (! $purchase) {
+                    throw ValidationException::withMessages([
+                        'units' => 'You do not own any units in this land.',
+                    ]);
+                }
 
                 if ($purchase->units < $request->units) {
                     throw ValidationException::withMessages([
@@ -489,7 +495,7 @@ class PurchaseController extends Controller
             }
         }
 
-        return response()->json($responseData);
+        return response()->json(array_merge(['success' => true], $responseData));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

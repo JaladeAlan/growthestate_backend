@@ -33,6 +33,10 @@ return Application::configure(basePath: dirname(__DIR__))
     
             // Transaction PIN
             'check.pin'          => \App\Http\Middleware\CheckTransactionPin::class,
+
+            // Sanctions screening
+            'screening.status'   => \App\Http\Middleware\CheckScreeningStatus::class,
+            'screening.transact' => \App\Http\Middleware\CheckScreeningClear::class,
     
             // Rate limiting
             'throttle.sensitive' => \App\Http\Middleware\ThrottleSensitiveRequests::class,
