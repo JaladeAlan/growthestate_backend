@@ -73,6 +73,18 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Admin mutations and financial transaction requests, written
+        // separately from the general app log so they can be retained
+        // longer and searched/exported independently for incident response.
+        // See App\Http\Middleware\LogSensitiveRequests.
+        'audit' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/audit.log'),
+            'level' => 'info',
+            'days' => env('LOG_AUDIT_DAYS', 365),
+            'replace_placeholders' => true,
+        ],
+
         'telegram' => [
             'driver'  => 'custom',
             'via'     => \App\Logging\TelegramLogger::class,
