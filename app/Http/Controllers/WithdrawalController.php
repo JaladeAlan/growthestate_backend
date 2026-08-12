@@ -284,6 +284,8 @@ class WithdrawalController extends Controller
                     'approved_by'   => $admin->id,
                 ]);
 
+                \App\Models\AdminActionLog::record($admin, 'withdrawal.approve', 'Withdrawal', $withdrawal->id, ['amount_kobo' => $withdrawal->amount_kobo], request()->ip());
+
             } catch (\Exception $e) {
                 // Paystack call failed — mark as failed so it appears in the
                 // admin queue for manual follow-up. Do NOT auto-refund here;
@@ -334,6 +336,8 @@ class WithdrawalController extends Controller
                 'rejected_by'   => $admin->id,
                 'reason'        => $request->reason,
             ]);
+
+            \App\Models\AdminActionLog::record($admin, 'withdrawal.reject', 'Withdrawal', $withdrawal->id, ['amount_kobo' => $withdrawal->amount_kobo, 'reason' => $request->reason], $request->ip());
 
             $this->refundWithdrawal($withdrawal, $request->reason);
         });

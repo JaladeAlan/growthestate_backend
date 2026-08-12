@@ -68,6 +68,8 @@ class ComplianceController extends Controller
             ]);
 
             $screening->user->update(['screening_status' => 'clear']);
+
+            \App\Models\AdminActionLog::record($request->user(), 'compliance.clear', 'UserScreening', $screening->id, ['user_id' => $screening->user_id, 'notes' => $request->notes], $request->ip());
         });
 
         return response()->json(['success' => true, 'message' => 'User cleared after manual review.']);
@@ -96,6 +98,8 @@ class ComplianceController extends Controller
                 'screening_status' => 'blocked',
                 'is_suspended'     => true,
             ]);
+
+            \App\Models\AdminActionLog::record($request->user(), 'compliance.block', 'UserScreening', $screening->id, ['user_id' => $screening->user_id, 'notes' => $request->notes], $request->ip());
         });
 
         return response()->json(['success' => true, 'message' => 'User blocked.']);

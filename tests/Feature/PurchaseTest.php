@@ -254,6 +254,47 @@ describe('Sell units', function () {
         ]);
     });
 
+    it('marks the purchase record sold_out when all units are sold', function () {
+        $user   = makeVerifiedUser(['balance_kobo' => 1_000_000]);
+        $landId = makeLand();
+        seedPrice($landId, 200_000);
+
+        DB::table('user_land')->insert([
+            'user_id'    => $user->id,
+            'land_id'    => $landId,
+            'units'      => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('purchases')->insert([
+            'user_id'                    => $user->id,
+            'land_id'                    => $landId,
+            'units'                      => 10,
+            'total_amount_paid_kobo'     => 2_000_000,
+            'total_amount_received_kobo' => 0,
+            'purchase_date'              => now(),
+            'status'                     => 'active',
+            'reference'                  => 'PUR-TEST-SOLDOUT',
+            'created_at'                 => now(),
+            'updated_at'                 => now(),
+        ]);
+
+        $this->actingAs($user, 'sanctum')
+            ->postJson("/api/lands/{$landId}/sell", [
+                'units'           => 10,
+                'transaction_pin' => '1234',
+            ])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('purchases', [
+            'user_id' => $user->id,
+            'land_id' => $landId,
+            'units'   => 0,
+            'status'  => 'sold_out',
+        ]);
+    });
+
     it('returns 422 when user tries to sell more units than owned', function () {
         $user   = makeVerifiedUser(['balance_kobo' => 1_000_000]);
         $landId = makeLand();

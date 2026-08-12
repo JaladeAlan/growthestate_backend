@@ -210,8 +210,6 @@ class KycController extends Controller
 
     public function adminIndex(Request $request)
     {
-        $this->authorizeAdmin();
-
         $status = $request->query('status');
         $query  = KycVerification::with('user:id,name,email');
 
@@ -226,8 +224,6 @@ class KycController extends Controller
 
     public function adminShow($id)
     {
-        $this->authorizeAdmin();
-
         $kyc  = KycVerification::with('user:id,name,email')->findOrFail($id);
         $data = $kyc->toArray();
 
@@ -244,8 +240,6 @@ class KycController extends Controller
 
     public function adminApprove($id)
     {
-        $this->authorizeAdmin();
-
         $kyc = KycVerification::with('user')->findOrFail($id);
 
         if ($kyc->status === 'approved') {
@@ -268,7 +262,9 @@ class KycController extends Controller
                 \App\Jobs\ScreenUserJob::dispatch($kyc->user, 'kyc_approved')->onQueue('default');
             });
         });
-        
+
+        \App\Models\AdminActionLog::record(auth()->user(), 'kyc.approve', 'KycVerification', $kyc->id, ['user_id' => $kyc->user_id], request()->ip());
+
         return response()->json([
             'success' => true,
             'message' => 'KYC approved successfully',
@@ -278,8 +274,6 @@ class KycController extends Controller
 
     public function adminReject(Request $request, $id)
     {
-        $this->authorizeAdmin();
-
         $data = $request->validate(['reason' => 'required|string']);
 
         $kyc = KycVerification::findOrFail($id);
@@ -290,6 +284,8 @@ class KycController extends Controller
             'verified_by'      => auth()->id(),
         ]);
 
+        \App\Models\AdminActionLog::record($request->user(), 'kyc.reject', 'KycVerification', $kyc->id, ['user_id' => $kyc->user_id, 'reason' => $data['reason']], $request->ip());
+
         return response()->json([
             'success' => true,
             'message' => 'KYC rejected',
@@ -299,8 +295,6 @@ class KycController extends Controller
 
     public function adminRequestResubmit(Request $request, $id)
     {
-        $this->authorizeAdmin();
-
         $data = $request->validate(['reason' => 'required|string']);
 
         $kyc = KycVerification::findOrFail($id);
@@ -317,8 +311,4 @@ class KycController extends Controller
         ]);
     }
 
-    private function authorizeAdmin(): void
-    {
-        abort_unless(auth()->user()?->is_admin, 403);
-    }
 }

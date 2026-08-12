@@ -21,6 +21,7 @@ class Purchase extends Model
         'total_amount_received_kobo', // Total amount received from sales
         'reference',
         'sell_date',            // Date of the sale
+        'status',
     ];
 
     // Cast attributes to appropriate data types

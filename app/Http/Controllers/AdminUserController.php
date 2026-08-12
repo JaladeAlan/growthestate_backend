@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AdminActionLog;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -120,6 +121,8 @@ class AdminUserController extends Controller
             'ip'             => $request->ip(),
         ]);
 
+        AdminActionLog::record($request->user(), 'users.suspend', 'User', $user->id, [], $request->ip());
+
         return response()->json([
             'success' => true,
             'message' => "{$user->name} has been suspended.",
@@ -150,6 +153,8 @@ class AdminUserController extends Controller
             'ip'             => $request->ip(),
         ]);
 
+        AdminActionLog::record($request->user(), 'users.unsuspend', 'User', $user->id, [], $request->ip());
+
         return response()->json([
             'success' => true,
             'message' => "{$user->name} has been unsuspended.",
@@ -179,6 +184,8 @@ class AdminUserController extends Controller
             'by_admin_id'    => $request->user()->id,
             'ip'             => $request->ip(),
         ]);
+
+        AdminActionLog::record($request->user(), 'users.make_admin', 'User', $user->id, [], $request->ip());
 
         return response()->json([
             'success' => true,
@@ -218,6 +225,8 @@ class AdminUserController extends Controller
             'ip'             => $request->ip(),
         ]);
 
+        AdminActionLog::record($request->user(), 'users.remove_admin', 'User', $user->id, [], $request->ip());
+
         return response()->json([
             'success' => true,
             'message' => "{$user->name}'s admin privileges have been removed.",
@@ -249,6 +258,7 @@ class AdminUserController extends Controller
 
         $name  = $user->name;
         $email = $user->email;
+        $userId = $user->id;
 
         $user->delete();
 
@@ -258,6 +268,8 @@ class AdminUserController extends Controller
             'by_admin_id'   => $request->user()->id,
             'ip'            => $request->ip(),
         ]);
+
+        AdminActionLog::record($request->user(), 'users.delete', 'User', $userId, ['name' => $name, 'email' => $email], $request->ip());
 
         return response()->json([
             'success' => true,

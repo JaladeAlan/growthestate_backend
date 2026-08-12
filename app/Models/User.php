@@ -313,4 +313,47 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
     {
         return $this->kycVerification?->status ?? 'not_submitted';
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RBAC
+    |--------------------------------------------------------------------------
+    */
+
+    public function roles(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(\App\Models\Role::class, 'role_user')
+            ->withPivot(['assigned_at', 'assigned_by']);
+    }
+
+    /**
+     * is_admin is kept as a fast, coarse "is this a staff account" flag
+     * (used e.g. by AdminMiddleware to gate the whole /admin prefix) and
+     * always implies every permission, independent of assigned roles —
+     * this preserves behavior for any account that predates RBAC or is
+     * granted admin outside the role system.
+     */
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->is_admin) {
+            return true;
+        }
+
+        return \Illuminate\Support\Facades\Cache::remember(
+            "user:{$this->id}:permission:{$permission}",
+            300,
+            fn () => $this->roles()
+                ->whereHas('permissions', fn ($q) => $q->where('name', $permission))
+                ->exists()
+        );
+    }
+
+    public function hasRole(string $role): bool
+    {
+        if ($this->is_admin) {
+            return true;
+        }
+
+        return $this->roles()->where('name', $role)->exists();
+    }
 }

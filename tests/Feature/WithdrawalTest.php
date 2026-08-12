@@ -81,6 +81,39 @@ describe('Withdrawal request', function () {
         ]);
     });
 
+    it('does not double-debit when the same Idempotency-Key is replayed', function () {
+        $user = kycApprovedUser(['balance_kobo' => 10_000_000]);
+        $key  = (string) \Illuminate\Support\Str::uuid();
+
+        $first = $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/withdraw', [
+                'amount'          => 5_000_000,
+                'transaction_pin' => '1234',
+            ]);
+
+        $first->assertStatus(200);
+
+        $second = $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/withdraw', [
+                'amount'          => 5_000_000,
+                'transaction_pin' => '1234',
+            ]);
+
+        $second->assertStatus(200)
+            ->assertHeader('X-Idempotent-Replayed', 'true')
+            ->assertJson($first->json());
+
+        // Balance debited only once, not twice
+        $this->assertDatabaseHas('users', [
+            'id'           => $user->id,
+            'balance_kobo' => 5_000_000,
+        ]);
+
+        expect(Withdrawal::where('user_id', $user->id)->count())->toBe(1);
+    });
+
     it('rejects when balance is insufficient', function () {
         $user = kycApprovedUser(['balance_kobo' => 500_000]); // ₦5,000
 

@@ -28,11 +28,13 @@ return Application::configure(basePath: dirname(__DIR__))
     
             // Authorization
             'admin'              => \App\Http\Middleware\AdminMiddleware::class,
+            'permission'         => \App\Http\Middleware\CheckPermission::class,
             'verified'           => \App\Http\Middleware\EnsureEmailIsVerified::class,
             'suspended'          => \App\Http\Middleware\EnsureUserIsNotSuspended::class,
     
             // Transaction PIN
             'check.pin'          => \App\Http\Middleware\CheckTransactionPin::class,
+            'idempotent'         => \App\Http\Middleware\EnsureIdempotency::class,
 
             // Sanctions screening
             'screening.status'   => \App\Http\Middleware\CheckScreeningStatus::class,

@@ -16,6 +16,7 @@ use App\Http\Controllers\ReferralController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\AdminUserController;
+use App\Http\Controllers\AdminRoleController;
 use App\Http\Controllers\AdminSupportController;
 use App\Http\Controllers\MarketplaceController;
 use App\Http\Controllers\CertificateController;
@@ -149,7 +150,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Deposits ──────────────────────────────────────────────────────────
         Route::post('/deposit', [DepositController::class, 'initiateDeposit'])
-            ->middleware(['throttle:10,60', 'screening.transact']);
+            ->middleware(['idempotent', 'throttle:10,60', 'screening.transact']);
         Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
         Route::get('/paystack/banks',             [DepositController::class, 'banks']);
         Route::post('/paystack/resolve-account',  [DepositController::class, 'resolveAccount'])
@@ -157,7 +158,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 
         // ── Withdrawals ───────────────────────────────────────────────────────
         Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
-            ->middleware(['throttle:5,60', 'screening.transact']);
+            ->middleware(['idempotent', 'throttle:5,60', 'screening.transact']);
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // ── Transactions ──────────────────────────────────────────────────────
@@ -243,13 +244,19 @@ Route::middleware(['jwt.auth'])->group(function () {
 Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
-    Route::get('/users',                       [AdminUserController::class, 'index']);
-    Route::get('/users/{user}',                [AdminUserController::class, 'show']);
-    Route::patch('/users/{user}/suspend',      [AdminUserController::class, 'suspend']);
-    Route::patch('/users/{user}/unsuspend',    [AdminUserController::class, 'unsuspend']);
-    Route::patch('/users/{user}/make-admin',   [AdminUserController::class, 'makeAdmin']);
-    Route::patch('/users/{user}/remove-admin', [AdminUserController::class, 'removeAdmin']);
-    Route::delete('/users/{user}',             [AdminUserController::class, 'destroy']);
+    Route::get('/users',                       [AdminUserController::class, 'index'])->middleware('permission:users.view');
+    Route::get('/users/{user}',                [AdminUserController::class, 'show'])->middleware('permission:users.view');
+    Route::patch('/users/{user}/suspend',      [AdminUserController::class, 'suspend'])->middleware('permission:users.suspend');
+    Route::patch('/users/{user}/unsuspend',    [AdminUserController::class, 'unsuspend'])->middleware('permission:users.unsuspend');
+    Route::patch('/users/{user}/make-admin',   [AdminUserController::class, 'makeAdmin'])->middleware('permission:roles.manage');
+    Route::patch('/users/{user}/remove-admin', [AdminUserController::class, 'removeAdmin'])->middleware('permission:roles.manage');
+    Route::delete('/users/{user}',             [AdminUserController::class, 'destroy'])->middleware('permission:users.delete');
+
+    // ── Roles ─────────────────────────────────────────────────────────────────
+    Route::get('/roles',                       [AdminRoleController::class, 'index'])->middleware('permission:roles.manage');
+    Route::get('/users/{user}/roles',          [AdminRoleController::class, 'userRoles'])->middleware('permission:roles.manage');
+    Route::post('/users/{user}/roles',         [AdminRoleController::class, 'assignRole'])->middleware('permission:roles.manage');
+    Route::delete('/users/{user}/roles/{role}',[AdminRoleController::class, 'revokeRole'])->middleware('permission:roles.manage');
 
     // ── Lands ─────────────────────────────────────────────────────────────────
     Route::get('/lands',                       [LandController::class, 'adminIndex']);
@@ -265,20 +272,20 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
     Route::delete('/lands/{land}/valuation/{year}/{month}', [LandController::class, 'deleteValuationEntry']);
 
     // ── KYC ───────────────────────────────────────────────────────────────────
-    Route::get('/kyc',                   [KycController::class, 'adminIndex']);
-    Route::get('/kyc/{id}',              [KycController::class, 'adminShow']);
-    Route::post('/kyc/{id}/approve',     [KycController::class, 'adminApprove'])->middleware('throttle:30,1');
-    Route::post('/kyc/{id}/reject',      [KycController::class, 'adminReject'])->middleware('throttle:30,1');
-    Route::post('/kyc/{id}/resubmit',    [KycController::class, 'adminRequestResubmit'])->middleware('throttle:30,1');
+    Route::get('/kyc',                   [KycController::class, 'adminIndex'])->middleware('permission:kyc.view');
+    Route::get('/kyc/{id}',              [KycController::class, 'adminShow'])->middleware('permission:kyc.view');
+    Route::post('/kyc/{id}/approve',     [KycController::class, 'adminApprove'])->middleware(['throttle:30,1', 'permission:kyc.approve']);
+    Route::post('/kyc/{id}/reject',      [KycController::class, 'adminReject'])->middleware(['throttle:30,1', 'permission:kyc.reject']);
+    Route::post('/kyc/{id}/resubmit',    [KycController::class, 'adminRequestResubmit'])->middleware(['throttle:30,1', 'permission:kyc.reject']);
 
     // ── Compliance (Sanctions & PEP) ──────────────────────────────────────────
     Route::prefix('compliance')->group(function () {
-        Route::get('/stats',                          [ComplianceController::class, 'stats']);
-        Route::get('/screenings',                     [ComplianceController::class, 'index']);
-        Route::get('/screenings/{screening}',         [ComplianceController::class, 'show']);
-        Route::post('/screenings/{screening}/clear',  [ComplianceController::class, 'clear'])->middleware('throttle:30,1');
-        Route::post('/screenings/{screening}/block',  [ComplianceController::class, 'block'])->middleware('throttle:30,1');
-        Route::post('/users/{user}/rescreen',         [ComplianceController::class, 'rescreen'])->middleware('throttle:10,1');
+        Route::get('/stats',                          [ComplianceController::class, 'stats'])->middleware('permission:compliance.view');
+        Route::get('/screenings',                     [ComplianceController::class, 'index'])->middleware('permission:compliance.view');
+        Route::get('/screenings/{screening}',         [ComplianceController::class, 'show'])->middleware('permission:compliance.view');
+        Route::post('/screenings/{screening}/clear',  [ComplianceController::class, 'clear'])->middleware(['throttle:30,1', 'permission:compliance.clear']);
+        Route::post('/screenings/{screening}/block',  [ComplianceController::class, 'block'])->middleware(['throttle:30,1', 'permission:compliance.block']);
+        Route::post('/users/{user}/rescreen',         [ComplianceController::class, 'rescreen'])->middleware(['throttle:10,1', 'permission:compliance.rescreen']);
     });
 
     // ── Support ───────────────────────────────────────────────────────────────
@@ -324,11 +331,11 @@ Route::middleware(['jwt.auth', 'admin', 'throttle:60,1'])->prefix('admin')->grou
 
     // ── Withdrawals ───────────────────────────────────────────────────────────
     Route::prefix('withdrawals')->group(function () {
-        Route::get('/', [WithdrawalController::class, 'adminIndex']);
+        Route::get('/', [WithdrawalController::class, 'adminIndex'])->middleware('permission:withdrawals.view');
 
-        Route::post('/approve-all',    [WithdrawalController::class, 'adminApproveAll'])->middleware('throttle:5,1');
-        Route::post('/{id}/approve',   [WithdrawalController::class, 'adminApprove'])->middleware('throttle:30,1');
-        Route::post('/{id}/reject',    [WithdrawalController::class, 'adminReject'])->middleware('throttle:30,1');
+        Route::post('/approve-all',    [WithdrawalController::class, 'adminApproveAll'])->middleware(['throttle:5,1', 'permission:withdrawals.approve']);
+        Route::post('/{id}/approve',   [WithdrawalController::class, 'adminApprove'])->middleware(['throttle:30,1', 'permission:withdrawals.approve']);
+        Route::post('/{id}/reject',    [WithdrawalController::class, 'adminReject'])->middleware(['throttle:30,1', 'permission:withdrawals.reject']);
     });
 
     // ── Referrals ─────────────────────────────────────────────────────────────

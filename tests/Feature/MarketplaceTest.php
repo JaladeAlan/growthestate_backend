@@ -287,6 +287,43 @@ describe('Accept offer trade execution', function () {
         ]);
     });
 
+    it("marks the seller's purchase record sold when the trade closes out their full holding", function () {
+        $seller = marketplaceUser(['balance_kobo' => 0]);
+        $buyer  = marketplaceUser(['balance_kobo' => 10_000_000]);
+        $landId = marketplaceLandId();
+
+        giveUnits($seller->id, $landId, 5);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 5,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $offer = MarketplaceOffer::create([
+            'listing_id'       => $listing->id,
+            'buyer_id'         => $buyer->id,
+            'units'            => 5,
+            'offer_price_kobo' => 500_000,
+            'status'           => 'pending',
+        ]);
+
+        $this->actingAs($seller, 'api')
+            ->patchJson("/api/marketplace/{$listing->id}/offers/{$offer->id}/accept", [
+                'transaction_pin' => '1234',
+            ])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('purchases', [
+            'user_id' => $seller->id,
+            'land_id' => $landId,
+            'units'   => 0,
+            'status'  => 'sold',
+        ]);
+    });
+
     it('rejects acceptance when buyer has insufficient balance', function () {
         $seller = marketplaceUser(['balance_kobo' => 0]);
         $buyer  = marketplaceUser(['balance_kobo' => 100]); // almost nothing

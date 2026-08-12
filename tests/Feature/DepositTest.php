@@ -109,6 +109,64 @@ describe('Deposit initiation', function () {
         $this->assertDatabaseMissing('deposits', ['user_id' => $user->id]);
     });
 
+    it('returns the cached response and does not create a duplicate deposit when the same Idempotency-Key is replayed', function () {
+        Http::fake([
+            'api.paystack.co/*' => Http::response([
+                'status' => true,
+                'data'   => [
+                    'authorization_url' => 'https://checkout.paystack.com/test123',
+                    'reference'         => 'DEP-test',
+                ],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create(['email_verified_at' => now()]);
+        $key  = (string) \Illuminate\Support\Str::uuid();
+
+        $first = $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/deposit', ['amount' => 500_000, 'gateway' => 'paystack']);
+
+        $first->assertStatus(200);
+
+        $second = $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/deposit', ['amount' => 500_000, 'gateway' => 'paystack']);
+
+        $second->assertStatus(200)
+            ->assertHeader('X-Idempotent-Replayed', 'true')
+            ->assertJson($first->json());
+
+        // Only one deposit record was ever created
+        expect(Deposit::where('user_id', $user->id)->count())->toBe(1);
+    });
+
+    it('creates a separate deposit when a different Idempotency-Key is used', function () {
+        Http::fake([
+            'api.paystack.co/*' => Http::response([
+                'status' => true,
+                'data'   => [
+                    'authorization_url' => 'https://checkout.paystack.com/test123',
+                    'reference'         => 'DEP-test',
+                ],
+            ], 200),
+        ]);
+
+        $user = User::factory()->create(['email_verified_at' => now()]);
+
+        $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', (string) \Illuminate\Support\Str::uuid())
+            ->postJson('/api/deposit', ['amount' => 500_000, 'gateway' => 'paystack'])
+            ->assertStatus(200);
+
+        $this->actingAs($user, 'sanctum')
+            ->withHeader('Idempotency-Key', (string) \Illuminate\Support\Str::uuid())
+            ->postJson('/api/deposit', ['amount' => 500_000, 'gateway' => 'paystack'])
+            ->assertStatus(200);
+
+        expect(Deposit::where('user_id', $user->id)->count())->toBe(2);
+    });
+
     it('returns 401 for unauthenticated requests', function () {
         $this->postJson('/api/deposit', ['amount' => 500_000, 'gateway' => 'paystack'])
             ->assertStatus(401);
