@@ -17,9 +17,91 @@ use App\Services\MailService;
 use App\Mail\VerifyEmailMail;
 use App\Mail\ResetPasswordEmail;
 use App\Jobs\ScreenUserJob;
+use Illuminate\Support\Facades\Cookie;
 
 class AuthController extends Controller
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    // AUTH COOKIES
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Frontend contract (see reuvest/frontend utils/tokenStore.ts): the API
+    // owns auth_token/user_role as httpOnly cookies set via Set-Cookie on
+    // /login and /refresh, cleared on /logout. is_authed is a non-sensitive
+    // flag cookie (NOT httpOnly) so client JS can check "is there a
+    // session" without ever touching the token itself.
+    //
+    // `Secure` is only set outside local dev — a Secure cookie is silently
+    // dropped by the browser over plain http://localhost, which is exactly
+    // how this ends up looking like login "does nothing": the token comes
+    // back in the response, but the cookie never gets stored, so every
+    // following request looks logged out.
+
+    /**
+     * Returns the JWT's expiry as a millisecond epoch timestamp, matching
+     * what the frontend expects in `expires_at` for scheduling proactive
+     * refresh (it can no longer decode the httpOnly token itself).
+     */
+    private function tokenExpiresAtMs(): int
+    {
+        $ttlMinutes = (int) config('jwt.ttl');
+        return now()->addMinutes($ttlMinutes)->getTimestamp() * 1000;
+    }
+
+    /**
+     * Builds the three auth cookies for a successful login/refresh.
+     *
+     * @return \Symfony\Component\HttpFoundation\Cookie[]
+     */
+    private function buildAuthCookies(string $token, string $role): array
+    {
+        $secure   = ! app()->environment('local');
+        $minutes  = (int) config('jwt.ttl');
+        // Host-only cookie (null) is fine for local dev — localhost:3000 and
+        // localhost:8000 share a host, so the port difference doesn't
+        // matter for cookie scoping. In production, if the API and frontend
+        // live on different subdomains (api.reu.ng vs app.reu.ng), this
+        // MUST be set to the shared parent domain (e.g. SESSION_DOMAIN=.reu.ng)
+        // or the cookie will only ever be visible to api.reu.ng and the
+        // frontend's own middleware will never see it — reusing
+        // SESSION_DOMAIN here rather than inventing a new env var since
+        // it's already documented in .env.example for exactly this purpose.
+        $domain   = config('session.domain');
+
+        return [
+            Cookie::make('auth_token', $token, $minutes, '/', $domain, $secure, true, false, 'Lax'),
+            Cookie::make('user_role', $role, $minutes, '/', $domain, $secure, true, false, 'Lax'),
+            // Deliberately NOT httpOnly — this is the one cookie client JS is allowed to read.
+            Cookie::make('is_authed', '1', $minutes, '/', $domain, $secure, false, false, 'Lax'),
+        ];
+    }
+
+    /**
+     * Clears all three auth cookies on logout.
+     *
+     * @return \Symfony\Component\HttpFoundation\Cookie[]
+     */
+    private function clearAuthCookies(): array
+    {
+        return [
+            Cookie::forget('auth_token'),
+            Cookie::forget('user_role'),
+            Cookie::forget('is_authed'),
+        ];
+    }
+
+    /**
+     * Chains multiple withCookie() calls — Laravel's Response only exposes
+     * the singular form, not a plural withCookies().
+     */
+    private function attachCookies($response, array $cookies)
+    {
+        foreach ($cookies as $cookie) {
+            $response = $response->withCookie($cookie);
+        }
+        return $response;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS
     // ─────────────────────────────────────────────────────────────────────────
@@ -211,7 +293,15 @@ class AuthController extends Controller
         // Clear the limiter on successful login
         RateLimiter::clear($key);
 
-        return $this->sendSuccessResponse(['token' => $token], 'Login successful');
+        $role = $user->is_admin ? 'admin' : 'user';
+
+        return $this->attachCookies(
+            $this->sendSuccessResponse(
+                ['token' => $token, 'expires_at' => $this->tokenExpiresAtMs()],
+                'Login successful'
+            ),
+            $this->buildAuthCookies($token, $role)
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -222,9 +312,18 @@ class AuthController extends Controller
     {
         try {
             JWTAuth::invalidate(JWTAuth::getToken());
-            return $this->sendSuccessResponse([], 'Successfully logged out');
+            return $this->attachCookies(
+                $this->sendSuccessResponse([], 'Successfully logged out'),
+                $this->clearAuthCookies()
+            );
         } catch (JWTException $e) {
-            return $this->sendErrorResponse('Could not log out', 500, ['exception' => $e->getMessage()]);
+            // Even if invalidation fails (e.g. token already expired), still
+            // clear the client-visible cookies so the user isn't stuck
+            // looking logged in.
+            return $this->attachCookies(
+                $this->sendErrorResponse('Could not log out', 500, ['exception' => $e->getMessage()]),
+                $this->clearAuthCookies()
+            );
         }
     }
 
@@ -236,7 +335,20 @@ class AuthController extends Controller
     {
         try {
             $newToken = JWTAuth::refresh(JWTAuth::getToken());
-            return $this->sendSuccessResponse(['token' => $newToken], 'Token refreshed successfully');
+
+            // Refresh invalidates the old token and issues a new one, so we
+            // need to re-resolve the user against the new token to know
+            // their current role for the user_role cookie.
+            $user = JWTAuth::setToken($newToken)->toUser();
+            $role = $user->is_admin ? 'admin' : 'user';
+
+            return $this->attachCookies(
+                $this->sendSuccessResponse(
+                    ['token' => $newToken, 'expires_at' => $this->tokenExpiresAtMs()],
+                    'Token refreshed successfully'
+                ),
+                $this->buildAuthCookies($newToken, $role)
+            );
         } catch (JWTException $e) {
             return $this->sendErrorResponse('Could not refresh token', 500, ['exception' => $e->getMessage()]);
         }

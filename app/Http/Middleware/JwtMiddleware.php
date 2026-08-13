@@ -14,7 +14,23 @@ class JwtMiddleware
     public function handle(Request $request, Closure $next)
     {
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            // The frontend moved to httpOnly-cookie auth (see AuthController's
+            // buildAuthCookies) and stopped sending an Authorization header
+            // entirely — it relies on the browser attaching the auth_token
+            // cookie via withCredentials. tymon/jwt-auth's parseToken()
+            // always re-extracts from the header/query string, which would
+            // silently wipe out a token set manually from the cookie — so
+            // the two paths are branched explicitly rather than combined.
+            // Header still takes priority for non-browser API clients
+            // (mobile app, Postman, server-to-server) that authenticate the
+            // classic way.
+            if ($request->bearerToken()) {
+                $user = JWTAuth::parseToken()->authenticate();
+            } elseif ($request->cookie('auth_token')) {
+                $user = JWTAuth::setToken($request->cookie('auth_token'))->authenticate();
+            } else {
+                return response()->json(['message' => 'Token not provided'], 401);
+            }
 
             if (! $user) {
                 return response()->json(['message' => 'User not found'], 401);
