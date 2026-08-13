@@ -31,7 +31,7 @@ class AdminUserController extends Controller
             'suspended'    => 'sometimes|in:0,1,true,false',
             'is_admin'     => 'sometimes|in:0,1,true,false',
             'kyc_status'   => 'sometimes|in:not_submitted,pending,approved,rejected,resubmit',
-            'per_page'     => 'sometimes|integer|min:0|max:100',
+            'per_page'     => 'sometimes|integer|min:1|max:100',
             'sort'         => 'sometimes|in:created_at,name,email,balance_kobo',
             'direction'    => 'sometimes|in:asc,desc',
         ]);
@@ -66,7 +66,7 @@ class AdminUserController extends Controller
             })
             ->orderBy($sort, $direction);
 
-        $users = $perPage === 0 ? $query->get() : $query->paginate($perPage);
+        $users = $query->paginate($perPage);
 
         return response()->json(['success' => true, 'data' => $users]);
     }
