@@ -67,6 +67,7 @@ return [
         'Accept',
         'Origin',
         'X-CSRF-TOKEN',
+        'X-XSRF-TOKEN',
     ],
 
     /*

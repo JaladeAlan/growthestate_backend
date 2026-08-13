@@ -3,7 +3,7 @@ services:
   - type: web
     name: sproutvest-app
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.render
     dockerContext: .
     plan: starter
     healthCheckPath: /api/health

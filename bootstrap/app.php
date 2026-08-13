@@ -34,6 +34,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // except-list is now load-bearing.
         $middleware->statefulApi();
 
+        $middleware->encryptCookies(except: [
+            'is_authed',
+        ]);
+
         $middleware->validateCsrfTokens(except: [
             'api/paystack/webhook',
             'api/monnify/webhook',
