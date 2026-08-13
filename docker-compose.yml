@@ -9,6 +9,7 @@ services:
     working_dir: /var/www/html
     environment:
       HOME: /var/www/html
+      PORT: 9000
     volumes:
       - ./:/var/www/html
     depends_on:
@@ -28,25 +29,25 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d
     depends_on:
       - app
-      - reverb
     networks:
       - laravel
 
-  reverb:
-    image: growth-estate-app
-    container_name: laravel-reverb
-    restart: unless-stopped
-    working_dir: /var/www/html
-    environment:
-      HOME: /var/www/html
-    volumes:
-      - ./:/var/www/html
-    command: php artisan reverb:start --host=0.0.0.0 --port=8081 --debug
-    depends_on:
-      - db
-      - redis
-    networks:
-      - laravel
+  # reverb:
+  #   WebSocket/broadcast support locally.
+  #   image: growth-estate-app
+  #   container_name: laravel-reverb
+  #   restart: unless-stopped
+  #   working_dir: /var/www/html
+  #   environment:
+  #     HOME: /var/www/html
+  #   volumes:
+  #     - ./:/var/www/html
+  #   command: php artisan reverb:start --host=0.0.0.0 --port=8081 --debug
+  #   depends_on:
+  #     - db
+  #     - redis
+  #   networks:
+  #     - laravel
 
   scheduler:
     image: growth-estate-app

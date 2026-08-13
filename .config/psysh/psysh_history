@@ -1,0 +1,3 @@
+config('database.redis.default.host') 
+config('database.connections.pgsql.host') 
+config('database.connections.pgsql.host')
