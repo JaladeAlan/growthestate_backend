@@ -56,7 +56,7 @@ class Kernel extends HttpKernel
     protected $routeMiddleware = [
         // Custom JWT middleware for authentication
         'admin' => \App\Http\Middleware\AdminMiddleware::class,
-        'jwt.auth' => \App\Http\Middleware\JwtMiddleware::class, // Custom JWT Authentication middleware
+        'jwt.custom' => \App\Http\Middleware\JwtMiddleware::class, // Custom JWT Authentication middleware
         'jwt.refresh' => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
         'check.pin' => \App\Http\Middleware\CheckTransactionPin::class,
 

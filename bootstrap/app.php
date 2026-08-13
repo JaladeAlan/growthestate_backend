@@ -14,6 +14,26 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
 
+        // Enables Sanctum's stateful-SPA session + CSRF plumbing on the
+        // 'api' group, for requests coming from a domain listed in
+        // config/sanctum.php's 'stateful' array (the frontend). It does NOT
+        // change how users are authenticated — that's still entirely
+        // App\Http\Middleware\JwtMiddleware / the auth_token cookie. This
+        // only adds: EncryptCookies, AddQueuedCookiesToResponse,
+        // StartSession, VerifyCsrfToken ahead of the existing stack, so
+        // that the CSRF token issued by GET /sanctum/csrf-cookie is
+        // actually checked on mutating requests. A request authenticated
+        // via Authorization: Bearer (mobile app, Postman, server-to-server)
+        // is NOT from a stateful domain and skips this entirely — CSRF only
+        // applies to cookie-authenticated browser requests, which is the
+        // only place CSRF is a real risk in the first place.
+        //
+        // Before this, `validateCsrfTokens(except: [...])` below configured
+        // exemptions for a check that never ran on api/* routes at all —
+        // ValidateCsrfToken only runs on the 'web' group by default. That
+        // except-list is now load-bearing.
+        $middleware->statefulApi();
+
         $middleware->validateCsrfTokens(except: [
             'api/paystack/webhook',
             'api/monnify/webhook',
@@ -23,7 +43,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             // Auth
             'auth'               => \App\Http\Middleware\Authenticate::class,
-            'jwt.auth'           => \App\Http\Middleware\JwtMiddleware::class,
+            // `jwt.auth` is reserved and subsequently registered by tymon/jwt-auth.
+            // Keep this alias unique so our cookie-aware authentication runs.
+            'jwt.custom'         => \App\Http\Middleware\JwtMiddleware::class,
             'jwt.refresh'        => \Tymon\JWTAuth\Http\Middleware\RefreshToken::class,
     
             // Authorization

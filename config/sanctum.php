@@ -15,11 +15,20 @@ return [
     |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-        Sanctum::currentApplicationUrlWithPort()
-    ))),
+    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', implode(',', array_filter([
+        'localhost',
+        'localhost:3000',
+        'localhost:5173',
+        '127.0.0.1',
+        '127.0.0.1:8000',
+        '::1',
+        // Production frontend — must be host[:port] only, no scheme, unlike
+        // CORS_ALLOWED_ORIGINS in config/cors.php which takes full URLs.
+        'reu.ng',
+        'www.reu.ng',
+        'app.reu.ng',
+        Sanctum::currentApplicationUrlWithPort(),
+    ])))),
 
     /*
     |--------------------------------------------------------------------------

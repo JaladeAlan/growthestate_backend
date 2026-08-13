@@ -130,7 +130,7 @@ Route::get('/verify/{certNumber}', [CertificateController::class, 'verify'])
 // AUTHENTICATED — requires valid JWT
 // =============================================================================
 
-Route::middleware(['jwt.auth'])->group(function () {
+Route::middleware(['jwt.custom'])->group(function () {
 
     Route::post('/logout',  [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh'])->middleware('throttle:10,1');
@@ -254,7 +254,7 @@ Route::middleware(['jwt.auth'])->group(function () {
 // ADMIN — requires JWT + admin flag
 // =============================================================================
 
-Route::middleware(['jwt.auth', 'admin', 'throttle:60,1', 'audit.log'])->prefix('admin')->group(function () {
+Route::middleware(['jwt.custom', 'admin', 'throttle:60,1', 'audit.log'])->prefix('admin')->group(function () {
 
     // ── Users ─────────────────────────────────────────────────────────────────
     Route::get('/users',                       [AdminUserController::class, 'index'])->middleware('permission:users.view');
