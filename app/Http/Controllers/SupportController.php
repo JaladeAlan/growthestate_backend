@@ -154,11 +154,12 @@ class SupportController extends Controller
             ->toArray();
 
         // ── 6. Build system prompt with enriched user context ──────────────────
-        $systemPrompt = $this->buildSystemPrompt($user);
+        $systemPrompt    = $this->buildSystemPrompt($user);
+        $sensitiveValues = $this->sensitiveValuesFor($user);
 
         // ── 7. Call OpenAI ─────────────────────────────────────────────────────────
         try {
-            $systemMessage = ['role' => 'system', 'content' => $this->buildSystemPrompt($user)];
+            $systemMessage = ['role' => 'system', 'content' => $systemPrompt];
 
             $response = Http::timeout(15)
                 ->retry(2, 500)
@@ -177,6 +178,27 @@ class SupportController extends Controller
             }
 
             $reply = $response->json('choices.0.message.content', 'Unable to generate a response right now.');
+
+            // ── Output-side guard: the system prompt embeds this user's real
+            // wallet balance, rewards balance, and recent deposit/withdrawal
+            // amounts so the assistant can answer naturally. The prompt tells the
+            // model never to repeat that data back, but that's an instruction, not
+            // an enforcement — a sufficiently crafted jailbreak that doesn't trip
+            // the financial-keyword filter above could still get the model to leak
+            // it. Check the outgoing reply against the exact values we injected and
+            // refuse rather than return a leak.
+            if ($this->containsSensitiveData($reply, $sensitiveValues)) {
+                Log::warning('AI Support: reply withheld for leaking sensitive user data', [
+                    'user_id' => $user->id,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'data'    => [
+                        'reply' => 'I can\'t share account or balance details here. Please check the app directly, or submit a support ticket if you need help with your account.',
+                    ],
+                ]);
+            }
 
             Cache::put($cacheKey, $reply, 300);
 
@@ -661,6 +683,54 @@ Instructions:
 5. Plain text only — no markdown, no bullet points.
 6. If you cannot help, direct the user to submit a support ticket.
 PROMPT;
+    }
+
+    /**
+     * The exact sensitive values injected into the system prompt for this user,
+     * as formatted strings — used only to check the model's reply for leakage.
+     * Kept in sync with buildSystemPrompt(); if that method's formatting changes,
+     * update this too.
+     */
+    private function sensitiveValuesFor($user): array
+    {
+        $values = [
+            number_format($user->wallet_balance / 100, 2),
+            number_format($user->rewards_balance / 100, 2),
+        ];
+
+        $amounts = Deposit::where('user_id', $user->id)
+            ->latest()
+            ->limit(3)
+            ->pluck('amount')
+            ->merge(
+                Withdrawal::where('user_id', $user->id)
+                    ->latest()
+                    ->limit(3)
+                    ->pluck('amount')
+            );
+
+        foreach ($amounts as $amount) {
+            $values[] = number_format($amount / 100, 2);
+        }
+
+        // Drop trivial/empty values (e.g. "0.00") that would false-positive
+        // against ordinary conversational replies.
+        return array_values(array_unique(array_filter($values, fn ($v) => $v !== '0.00')));
+    }
+
+    /**
+     * True if the reply contains any of the exact sensitive values that were
+     * injected into the system prompt for this request.
+     */
+    private function containsSensitiveData(string $reply, array $sensitiveValues): bool
+    {
+        foreach ($sensitiveValues as $value) {
+            if (Str::contains($reply, $value)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

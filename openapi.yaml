@@ -48,6 +48,18 @@ tags:
     description: Referral dashboard and reward claiming
   - name: Support
     description: AI chat, support tickets, and FAQs
+  - name: Live Chat
+    description: Real-time support chat — user side (queue, message, typing)
+  - name: Marketplace
+    description: Peer-to-peer resale of owned land units — listings, offers, chat
+  - name: Certificates
+    description: Ownership certificates — user access, download, and public verification
+  - name: Blog
+    description: Public blog listing, single post, categories and tags
+  - name: Waitlist
+    description: Pre-launch waitlist signup, referral boosting, and status check
+  - name: System
+    description: Health and liveness checks
   - name: Admin – Lands
     description: Admin land management
   - name: Admin – Users
@@ -58,6 +70,20 @@ tags:
     description: Admin support ticket management
   - name: Admin – Referrals
     description: Admin referral overview
+  - name: Admin – Withdrawals
+    description: Admin review and batch processing of withdrawal requests
+  - name: Admin – Roles
+    description: RBAC role assignment and revocation
+  - name: Admin – Compliance
+    description: Sanctions/PEP screening review, clearing, and blocking
+  - name: Admin – Live Chat
+    description: Agent-side live chat queue, claim, message, and end
+  - name: Admin – Blog
+    description: Blog post, category, and tag management
+  - name: Admin – Certificates
+    description: Certificate listing, revocation, and regeneration
+  - name: Admin – Waitlist
+    description: Waitlist review, invitation, and removal
   - name: Webhooks
     description: Payment gateway webhook endpoints (public)
 
@@ -803,10 +829,700 @@ components:
               type: number
               description: Amount in NGN
 
+    # ── Marketplace ──────────────────────────────────────────────────────────
+
+    MarketplaceListing:
+      type: object
+      properties:
+        id:
+          type: integer
+        seller_id:
+          type: integer
+        land_id:
+          type: integer
+        units_for_sale:
+          type: integer
+        asking_price_kobo:
+          type: integer
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, cancelled, sold]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    MarketplaceListingCreateRequest:
+      type: object
+      required: [land_id, units_for_sale, asking_price_kobo]
+      properties:
+        land_id:
+          type: integer
+        units_for_sale:
+          type: integer
+          minimum: 1
+        asking_price_kobo:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Must be a future date/time if supplied
+
+    MarketplaceListingUpdateRequest:
+      type: object
+      description: All fields optional — only editable while the listing is active
+      properties:
+        asking_price_kobo:
+          type: integer
+          minimum: 1
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    MarketplaceOffer:
+      type: object
+      properties:
+        id:
+          type: integer
+        listing_id:
+          type: integer
+        buyer_id:
+          type: integer
+        units:
+          type: integer
+        offer_price_kobo:
+          type: integer
+        message:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, accepted, rejected, withdrawn]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    MarketplaceOfferCreateRequest:
+      type: object
+      required: [units, offer_price_kobo]
+      properties:
+        units:
+          type: integer
+          minimum: 1
+          description: Cannot exceed the listing's units_for_sale
+        offer_price_kobo:
+          type: integer
+          minimum: 1
+        message:
+          type: string
+          maxLength: 500
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    MarketplaceAcceptOfferRequest:
+      type: object
+      required: [transaction_pin]
+      properties:
+        transaction_pin:
+          type: string
+          minLength: 4
+          maxLength: 4
+
+    MarketplaceTransaction:
+      type: object
+      properties:
+        id:
+          type: integer
+        listing_id:
+          type: integer
+        buyer_id:
+          type: integer
+        seller_id:
+          type: integer
+        land_id:
+          type: integer
+        units:
+          type: integer
+        price_kobo:
+          type: integer
+        completed_at:
+          type: string
+          format: date-time
+
+    MarketplaceMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        listing_id:
+          type: integer
+        sender_id:
+          type: integer
+        receiver_id:
+          type: integer
+        body:
+          type: string
+        is_read:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    MarketplaceMessageCreateRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+        receiver_id:
+          type: integer
+          description: >
+            Required only when the seller is initiating the thread (a buyer's
+            first message infers the seller as the receiver automatically).
+
+    # ── Certificates ─────────────────────────────────────────────────────────
+
+    Certificate:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        land_id:
+          type: integer
+        cert_number:
+          type: string
+          example: CERT-2026-000123
+        owner_name:
+          type: string
+        units:
+          type: integer
+        property_title:
+          type: string
+        property_location:
+          type: string
+        total_invested:
+          type: number
+        status:
+          type: string
+          enum: [active, revoked]
+        issued_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CertificateVerifyResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        cert_number:
+          type: string
+        owner_name:
+          type: string
+        units:
+          type: integer
+        property_title:
+          type: string
+        property_location:
+          type: string
+        total_invested:
+          type: number
+        issued_at:
+          type: string
+          format: date-time
+        last_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, revoked]
+
+    # ── Blog ─────────────────────────────────────────────────────────────────
+
+    BlogCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        posts_count:
+          type: integer
+
+    BlogTag:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        posts_count:
+          type: integer
+
+    BlogPost:
+      type: object
+      properties:
+        id:
+          type: integer
+        author_id:
+          type: integer
+        category_id:
+          type: integer
+          nullable: true
+        title:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+          nullable: true
+        content:
+          type: string
+          description: Present on single-post and admin responses; omitted from list responses
+        cover_image:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [draft, published]
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        read_time_minutes:
+          type: integer
+          nullable: true
+        views:
+          type: integer
+        seo_title:
+          type: string
+          nullable: true
+        seo_description:
+          type: string
+          nullable: true
+
+    BlogPostCreateRequest:
+      type: object
+      required: [title, content]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        slug:
+          type: string
+          maxLength: 220
+          nullable: true
+        excerpt:
+          type: string
+          maxLength: 500
+          nullable: true
+        content:
+          type: string
+        category_id:
+          type: integer
+          nullable: true
+        tag_ids:
+          type: array
+          items:
+            type: integer
+        status:
+          type: string
+          enum: [draft, published]
+          nullable: true
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        seo_title:
+          type: string
+          maxLength: 70
+          nullable: true
+        seo_description:
+          type: string
+          maxLength: 160
+          nullable: true
+        cover_image:
+          type: string
+          format: binary
+          nullable: true
+
+    BlogPostUpdateRequest:
+      type: object
+      description: All fields optional (partial update)
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        slug:
+          type: string
+          maxLength: 220
+        excerpt:
+          type: string
+          maxLength: 500
+          nullable: true
+        content:
+          type: string
+        category_id:
+          type: integer
+          nullable: true
+        tag_ids:
+          type: array
+          items:
+            type: integer
+        status:
+          type: string
+          enum: [draft, published]
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        seo_title:
+          type: string
+          maxLength: 70
+          nullable: true
+        seo_description:
+          type: string
+          maxLength: 160
+          nullable: true
+        cover_image:
+          type: string
+          format: binary
+          nullable: true
+
+    BlogCategoryRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        slug:
+          type: string
+          maxLength: 100
+          nullable: true
+        description:
+          type: string
+          maxLength: 300
+          nullable: true
+
+    BlogTagRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 60
+        slug:
+          type: string
+          maxLength: 80
+          nullable: true
+
+    # ── Waitlist ─────────────────────────────────────────────────────────────
+
+    WaitlistJoinRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        email:
+          type: string
+          format: email
+          maxLength: 200
+        budget:
+          type: string
+          enum: [5k_50k, 50k_500k, 500k_plus]
+          nullable: true
+        city:
+          type: string
+          enum: [ogun, oyo, abuja, other]
+          nullable: true
+        referral_code:
+          type: string
+          maxLength: 12
+          nullable: true
+          description: If valid, both the new entrant and the referrer move up in position
+
+    WaitlistJoinResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            position:
+              type: integer
+            referral_code:
+              type: string
+              description: The new entrant's own shareable referral code
+
+    WaitlistCheckResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            name:
+              type: string
+            position:
+              type: integer
+            referral_code:
+              type: string
+            referrals_count:
+              type: integer
+            invited:
+              type: boolean
+
+    WaitlistEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        budget:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        position:
+          type: integer
+        referral_code:
+          type: string
+        referred_by_code:
+          type: string
+          nullable: true
+        referral_count:
+          type: integer
+        invited:
+          type: boolean
+        invited_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Compliance (Sanctions & PEP) ─────────────────────────────────────────
+
+    UserScreening:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, clear, flagged, blocked]
+        reviewed_by:
+          type: string
+          nullable: true
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ComplianceReviewRequest:
+      type: object
+      required: [notes]
+      properties:
+        notes:
+          type: string
+          minLength: 10
+          description: Required justification for the manual review decision
+
+    ComplianceStats:
+      type: object
+      properties:
+        total_screened:
+          type: integer
+        pending_review:
+          type: integer
+        blocked_users:
+          type: integer
+        flagged_users:
+          type: integer
+        clear_users:
+          type: integer
+        never_screened:
+          type: integer
+        sanctions_entries:
+          type: integer
+        last_sync:
+          type: object
+          nullable: true
+          description: Most recent row from sanctions_list_syncs, or null if never synced
+
+    # ── RBAC Roles ───────────────────────────────────────────────────────────
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          example: compliance_officer
+        label:
+          type: string
+        description:
+          type: string
+          nullable: true
+        permissions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+                example: kyc.approve
+              label:
+                type: string
+
+    AssignRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          description: Role name (must already exist), e.g. compliance_officer
+
+    # ── Live Chat ────────────────────────────────────────────────────────────
+
+    LiveChatRequestBody:
+      type: object
+      description: >
+        Only required when the user has no existing open/waiting ticket to
+        upgrade — if one exists, the body is ignored and that ticket is
+        switched to live mode.
+      properties:
+        subject:
+          type: string
+          maxLength: 150
+        category:
+          type: string
+          enum: [account, payment, kyc, investment, withdrawal, other]
+        message:
+          type: string
+          maxLength: 3000
+
+    LiveChatMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+        attachment:
+          type: string
+          format: binary
+          nullable: true
+
+    LiveChatTypingRequest:
+      type: object
+      properties:
+        is_typing:
+          type: boolean
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PATHS
 # ─────────────────────────────────────────────────────────────────────────────
 paths:
+
+  ################################################################
+  # SYSTEM
+  ################################################################
+
+  /health:
+    get:
+      tags: [System]
+      summary: Detailed health check (DB + Redis + queue)
+      description: >
+        Returns 200 only when both the database and Redis are reachable;
+        503 otherwise. Intended for uptime monitors (UptimeRobot, Pingdom)
+        that alert on non-200 responses.
+      security: []
+      responses:
+        "200":
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  db: { type: boolean }
+                  db_error: { type: string, nullable: true }
+                  redis: { type: boolean }
+                  redis_error: { type: string, nullable: true }
+                  queue_size: { type: integer, nullable: true }
+                  cache_driver: { type: string }
+                  timestamp: { type: string, format: date-time }
+        "503":
+          description: DB or Redis unreachable
+
+  /up:
+    get:
+      tags: [System]
+      summary: Bare liveness check
+      description: Always returns 200 if the app process is up — no dependency checks.
+      security: []
+      responses:
+        "200":
+          description: Process is running
 
   ################################################################
   # AUTH
@@ -1533,6 +2249,52 @@ paths:
   # PURCHASE & SELL
   ################################################################
 
+  /lands/{id}/purchase/preview:
+    get:
+      tags: [Purchase]
+      summary: Preview the cost of a purchase before committing (discounts, rewards applied)
+      description: >
+        Computes first-purchase and referral discounts and how much of the
+        cost would be covered by rewards balance vs. main wallet, without
+        creating a purchase. Does not require the transaction PIN
+        middleware, unlike the actual purchase endpoint.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+        - name: units
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: use_rewards
+          in: query
+          schema: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Cost breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      units: { type: integer }
+                      price_per_unit_kobo: { type: integer }
+                      original_cost_kobo: { type: integer }
+                      total_discount_kobo: { type: integer }
+                      discount_percent: { type: number }
+                      discount_label: { type: string, nullable: true }
+                      rewards_balance_kobo: { type: integer }
+                      paid_from_rewards_kobo: { type: integer }
+                      paid_from_wallet_kobo: { type: integer }
+                      total_due_kobo:
+                        type: integer
+                        description: Amount that will be charged to the wallet (after rewards applied)
+        "422":
+          description: Property has no price set
+
   /lands/{id}/purchase:
     post:
       tags: [Purchase]
@@ -1688,7 +2450,7 @@ paths:
         "502":
           description: Gateway error
 
-  /deposit/{reference}:
+  /deposit/verify/{reference}:
     get:
       tags: [Deposits]
       summary: Check deposit status by reference
@@ -1772,16 +2534,6 @@ paths:
                 $ref: '#/components/schemas/Withdrawal'
         "404":
           description: Not found
-
-  /withdrawal/retry:
-    get:
-      tags: [Withdrawals]
-      summary: Retry all pending withdrawals (admin / internal)
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Pending withdrawals retried
 
   ################################################################
   # BANKS
@@ -2082,7 +2834,7 @@ paths:
         "404":
           description: Invalid referral code
 
-  /referrals/rewards/available:
+  /referrals/rewards:
     get:
       tags: [Referrals]
       summary: Get unclaimed referral rewards
@@ -2223,7 +2975,7 @@ paths:
                   data:
                     $ref: '#/components/schemas/SupportTicket'
 
-  /support/guest-tickets:
+  /support/tickets/guest:
     post:
       tags: [Support]
       summary: Submit a support ticket as a guest (rate limited 5/10 min per IP)
@@ -2333,6 +3085,614 @@ paths:
       responses:
         "200":
           description: FAQs grouped by category
+
+  ################################################################
+  # LIVE CHAT (user side)
+  ################################################################
+
+  /support/live-chat/request:
+    post:
+      tags: [Live Chat]
+      summary: Request a live agent (creates or upgrades a ticket, joins the queue)
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveChatRequestBody'
+      responses:
+        "200":
+          description: Added to queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  ticket_id: { type: integer }
+                  reference: { type: string }
+                  queue_pos: { type: integer }
+                  message: { type: string }
+
+  /support/live-chat/{ticket}/message:
+    post:
+      tags: [Live Chat]
+      summary: Send a message on an active live chat ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LiveChatMessageRequest'
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/SupportMessage'
+        "404":
+          description: Ticket not found or not owned by this user
+
+  /support/live-chat/{ticket}/typing:
+    post:
+      tags: [Live Chat]
+      summary: Broadcast a typing indicator to the agent
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveChatTypingRequest'
+      responses:
+        "200":
+          description: Typing event broadcast
+        "404":
+          description: Ticket not found or not owned by this user
+
+  ################################################################
+  # MARKETPLACE
+  ################################################################
+
+  /marketplace:
+    get:
+      tags: [Marketplace]
+      summary: Browse active marketplace listings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: land_id
+          in: query
+          schema: { type: integer }
+        - name: min_price
+          in: query
+          schema: { type: integer }
+        - name: max_price
+          in: query
+          schema: { type: integer }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [price_asc, price_desc, newest, units_desc]
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        "200":
+          description: Paginated active listings
+    post:
+      tags: [Marketplace]
+      summary: Create a listing to sell owned units on the marketplace
+      description: >
+        Fails with a validation error if units_for_sale exceeds the
+        seller's unlisted units for that land (owned units minus units
+        already in other active listings).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceListingCreateRequest'
+      responses:
+        "201":
+          description: Listing created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  data:
+                    $ref: '#/components/schemas/MarketplaceListing'
+        "422":
+          description: Insufficient unlisted units
+
+  /marketplace/my-listings:
+    get:
+      tags: [Marketplace]
+      summary: List the current user's own marketplace listings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated own listings
+
+  /marketplace/my-offers:
+    get:
+      tags: [Marketplace]
+      summary: List offers the current user has made as a buyer
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated own offers
+
+  /marketplace/my-transactions:
+    get:
+      tags: [Marketplace]
+      summary: List completed marketplace trades involving the current user (either side)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated own transactions
+
+  /marketplace/{listing}:
+    get:
+      tags: [Marketplace]
+      summary: View a single listing with pending offers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Listing detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/MarketplaceListing'
+    patch:
+      tags: [Marketplace]
+      summary: Edit an active listing (seller only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceListingUpdateRequest'
+      responses:
+        "200":
+          description: Listing updated
+        "403":
+          description: Not the listing's seller
+        "422":
+          description: Listing is not active
+    delete:
+      tags: [Marketplace]
+      summary: Cancel an active listing (seller only) — rejects any pending offers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Listing cancelled
+        "403":
+          description: Not the listing's seller
+        "422":
+          description: Listing is not active
+
+  /marketplace/{listing}/offers:
+    post:
+      tags: [Marketplace]
+      summary: Make an offer on a listing (buyer)
+      description: >
+        Rejected if the buyer already has a pending offer on this listing
+        (must withdraw it first), if the listing is inactive/expired, or
+        if attempting to offer on one's own listing.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceOfferCreateRequest'
+      responses:
+        "201":
+          description: Offer submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  data:
+                    $ref: '#/components/schemas/MarketplaceOffer'
+        "422":
+          description: Own listing, inactive listing, or an existing pending offer
+
+  /marketplace/{listing}/offers/{offer}/accept:
+    patch:
+      tags: [Marketplace]
+      summary: Accept an offer — executes the trade immediately (seller, PIN required)
+      description: >
+        Requires the seller's transaction PIN. Trade execution (unit
+        transfer, payment, and settlement) is delegated to
+        MarketplaceTradeService and completes synchronously.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: offer
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceAcceptOfferRequest'
+      responses:
+        "200":
+          description: Trade complete — units transferred immediately
+        "422":
+          description: Offer no longer pending, or incorrect PIN
+
+  /marketplace/{listing}/offers/{offer}/reject:
+    patch:
+      tags: [Marketplace]
+      summary: Reject a pending offer (seller only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: offer
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Offer rejected
+        "422":
+          description: Offer is not pending
+
+  /marketplace/{listing}/offers/{offer}/withdraw:
+    patch:
+      tags: [Marketplace]
+      summary: Withdraw a pending offer (buyer only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: offer
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Offer withdrawn
+        "403":
+          description: Not the offer's buyer
+        "422":
+          description: Offer cannot be withdrawn
+
+  /marketplace/{listing}/messages:
+    get:
+      tags: [Marketplace]
+      summary: Read the message thread for a listing
+      description: >
+        Sellers must supply `with` (the buyer's user ID) to select which
+        buyer thread to view, since a seller may have several concurrent
+        conversations on one listing. Buyers need no parameter — their
+        thread is always with the seller. Marks the other party's
+        messages as read.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: with
+          in: query
+          schema: { type: integer }
+          description: Required for the seller; ignored for buyers
+      responses:
+        "200":
+          description: Message thread, oldest first
+        "403":
+          description: Not a participant in this listing's conversation, or invalid `with`
+    post:
+      tags: [Marketplace]
+      summary: Send a message on a listing's thread
+      description: >
+        A seller must supply `receiver_id` (the buyer being messaged); a
+        buyer's message always routes to the seller automatically.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: listing
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketplaceMessageCreateRequest'
+      responses:
+        "201":
+          description: Message sent
+        "403":
+          description: Not a participant in this listing's conversation
+        "422":
+          description: Seller sent without receiver_id
+
+  ################################################################
+  # CERTIFICATES
+  ################################################################
+
+  /certificates:
+    get:
+      tags: [Certificates]
+      summary: List the current user's own active certificates
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Own active certificates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Certificate'
+
+  /certificates/{certNumber}:
+    get:
+      tags: [Certificates]
+      summary: View a single owned certificate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: certNumber
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Certificate detail
+        "404":
+          description: Not found or not owned by this user
+
+  /certificates/{certNumber}/download:
+    get:
+      tags: [Certificates]
+      summary: Download the certificate as a PDF
+      description: Only active (non-revoked) certificates can be downloaded.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: certNumber
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: PDF file stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "403":
+          description: Certificate is revoked
+        "404":
+          description: Not found or not owned by this user
+
+  /verify/{certNumber}:
+    get:
+      tags: [Certificates]
+      summary: Publicly verify a certificate by number (e.g. via QR code scan)
+      description: >
+        No authentication required. Result is cached for 60 seconds to
+        absorb QR-scan bursts. Returns only non-sensitive fields suitable
+        for public display.
+      security: []
+      parameters:
+        - name: certNumber
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateVerifyResponse'
+        "404":
+          description: Certificate not found or signature invalid
+
+  ################################################################
+  # BLOG (public)
+  ################################################################
+
+  /blog:
+    get:
+      tags: [Blog]
+      summary: List published blog posts
+      security: []
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 24 }
+      responses:
+        "200":
+          description: Paginated published posts (9 per page by default)
+
+  /blog/{slug}:
+    get:
+      tags: [Blog]
+      summary: View a single published post by slug
+      description: Increments the post's view count (best-effort, non-blocking).
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/BlogPost'
+        "404":
+          description: Not found or not published
+
+  /blog/categories:
+    get:
+      tags: [Blog]
+      summary: List categories that have at least one published post
+      security: []
+      responses:
+        "200":
+          description: Categories with post counts
+
+  /blog/tags:
+    get:
+      tags: [Blog]
+      summary: List tags that have at least one published post
+      security: []
+      responses:
+        "200":
+          description: Tags with post counts
+
+  ################################################################
+  # WAITLIST (public)
+  ################################################################
+
+  /waitlist:
+    post:
+      tags: [Waitlist]
+      summary: Join the pre-launch waitlist
+      description: >
+        Idempotent by email — resubmitting an existing email returns that
+        entry's current position rather than erroring. A valid
+        referral_code moves the new entrant up (REFERRAL_BOOST spots) and
+        moves the referrer up further (REFERRER_BOOST spots).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaitlistJoinRequest'
+      responses:
+        "200":
+          description: Already on the list — existing position returned
+        "201":
+          description: New entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitlistJoinResponse'
+
+  /waitlist/check:
+    post:
+      tags: [Waitlist]
+      summary: Check waitlist status by email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Status found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitlistCheckResponse'
+        "404":
+          description: Email not found on the waitlist
 
   ################################################################
   # ADMIN — LANDS
@@ -2471,6 +3831,93 @@ paths:
                     type: boolean
                   is_available:
                     type: boolean
+
+  /admin/lands/{id}/valuation:
+    get:
+      tags: [Admin – Lands]
+      summary: List a land's monthly valuation history
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      responses:
+        "200":
+          description: Valuation entries ordered by year, month
+    post:
+      tags: [Admin – Lands]
+      summary: Add a monthly valuation entry
+      description: Rejects if an entry already exists for that year/month — use PATCH to update it instead.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [year, month, value]
+              properties:
+                year: { type: integer, minimum: 1900, maximum: 2100 }
+                month: { type: integer, minimum: 1, maximum: 12 }
+                value: { type: number, minimum: 0 }
+      responses:
+        "201":
+          description: Valuation entry created
+        "422":
+          description: An entry for that year/month already exists
+
+  /admin/lands/{id}/valuation/{year}/{month}:
+    patch:
+      tags: [Admin – Lands]
+      summary: Update an existing monthly valuation entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+        - name: year
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: month
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: number, minimum: 0 }
+      responses:
+        "200":
+          description: Entry updated
+        "422":
+          description: No entry exists for that year/month
+    delete:
+      tags: [Admin – Lands]
+      summary: Remove a monthly valuation entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/landId'
+        - name: year
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: month
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Entry removed
+        "422":
+          description: No entry exists for that year/month
 
   ################################################################
   # ADMIN — USERS
@@ -2865,6 +4312,693 @@ paths:
       responses:
         "200":
           description: Referral stats
+
+  ################################################################
+  # ADMIN — WITHDRAWALS
+  ################################################################
+
+  /admin/withdrawals:
+    get:
+      tags: [Admin – Withdrawals]
+      summary: List withdrawals (filterable by status), pending-first ordering
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, processing, completed, rejected, failed]
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Paginated withdrawal list
+
+  /admin/withdrawals/approve-all:
+    post:
+      tags: [Admin – Withdrawals]
+      summary: Batch-approve all pending withdrawals
+      description: >
+        Each withdrawal is moved pending → processing and committed in
+        its own transaction *before* the Paystack transfer call, and any
+        transfer failure is recorded in a separate transaction scoped by
+        `WHERE status = 'processing'`. This prevents a failed transfer
+        from rolling back the status change of a withdrawal that Paystack
+        may have already received — see the note on
+        `/admin/withdrawals/{id}/approve` for the full rationale. Skips
+        (does not error on) any withdrawal whose status changed to
+        something other than `pending` between the initial query and the
+        row lock.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Batch result with per-withdrawal outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  approved: { type: integer }
+                  failed: { type: integer }
+                  details:
+                    type: object
+                    properties:
+                      approved:
+                        type: array
+                        items: { type: string }
+                        description: References of successfully approved withdrawals
+                      failed:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            reference: { type: string }
+                            error: { type: string }
+
+  /admin/withdrawals/{id}/approve:
+    post:
+      tags: [Admin – Withdrawals]
+      summary: Approve a single pending withdrawal and initiate the Paystack transfer
+      description: >
+        Only `pending` withdrawals can be approved. The status change to
+        `processing` is committed before the Paystack API call; if the
+        call throws, the withdrawal is marked `failed` in a separate
+        transaction rather than rolled back to `pending` — this avoids a
+        possible double-transfer if Paystack had actually received the
+        transfer before the exception surfaced. A `failed` withdrawal is
+        NOT auto-refunded; an admin must verify the transfer status on
+        the Paystack dashboard before rejecting it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Approved and transfer initiated
+        "422":
+          description: Withdrawal is not pending
+        "502":
+          description: Transfer initiation failed — withdrawal marked failed, verify on Paystack
+
+  /admin/withdrawals/{id}/reject:
+    post:
+      tags: [Admin – Withdrawals]
+      summary: Reject a pending or failed withdrawal and refund the user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Rejected and funds returned to the user's wallet
+        "422":
+          description: Only pending or failed withdrawals can be rejected
+
+  ################################################################
+  # ADMIN — ROLES
+  ################################################################
+
+  /admin/roles:
+    get:
+      tags: [Admin – Roles]
+      summary: List all roles with their permissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Role list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Role'
+
+  /admin/users/{user}/roles:
+    get:
+      tags: [Admin – Roles]
+      summary: List a user's assigned roles with permissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: User's roles
+    post:
+      tags: [Admin – Roles]
+      summary: Assign a role to a user
+      description: >
+        Busts the 5-minute per-permission cache for the affected user so
+        the change takes effect immediately rather than waiting out the
+        TTL.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignRoleRequest'
+      responses:
+        "200":
+          description: Role assigned
+        "422":
+          description: User already has this role
+
+  /admin/users/{user}/roles/{role}:
+    delete:
+      tags: [Admin – Roles]
+      summary: Revoke a role from a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+        - name: role
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Role ID
+      responses:
+        "200":
+          description: Role revoked
+
+  ################################################################
+  # ADMIN — COMPLIANCE (Sanctions & PEP)
+  ################################################################
+
+  /admin/compliance/stats:
+    get:
+      tags: [Admin – Compliance]
+      summary: Compliance dashboard summary statistics
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Compliance stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/ComplianceStats'
+
+  /admin/compliance/screenings:
+    get:
+      tags: [Admin – Compliance]
+      summary: List flagged/blocked screenings pending manual review
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated unreviewed screenings
+
+  /admin/compliance/screenings/{screening}:
+    get:
+      tags: [Admin – Compliance]
+      summary: View a screening's full match details
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: screening
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Screening detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/UserScreening'
+
+  /admin/compliance/screenings/{screening}/clear:
+    post:
+      tags: [Admin – Compliance]
+      summary: Mark a screening as a cleared false-positive after manual review
+      description: Row-locked and rejects if already reviewed (idempotency against double-submission).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: screening
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplianceReviewRequest'
+      responses:
+        "200":
+          description: User cleared
+        "409":
+          description: Screening already reviewed
+
+  /admin/compliance/screenings/{screening}/block:
+    post:
+      tags: [Admin – Compliance]
+      summary: Confirm a sanctions/PEP match and suspend the user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: screening
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplianceReviewRequest'
+      responses:
+        "200":
+          description: User blocked and suspended
+
+  /admin/compliance/users/{user}/rescreen:
+    post:
+      tags: [Admin – Compliance]
+      summary: Manually queue a re-screen for a specific user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        "200":
+          description: Re-screening job queued
+
+  ################################################################
+  # ADMIN — LIVE CHAT (agent side)
+  ################################################################
+
+  /admin/live-chat/queue:
+    get:
+      tags: [Admin – Live Chat]
+      summary: View the live chat queue (queued + currently active tickets)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Queued tickets in queue order, followed by active claimed tickets
+
+  /admin/live-chat/{ticket}/claim:
+    post:
+      tags: [Admin – Live Chat]
+      summary: Claim an unclaimed ticket from the queue
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Ticket claimed
+        "409":
+          description: Ticket already claimed by another agent
+
+  /admin/live-chat/{ticket}/message:
+    post:
+      tags: [Admin – Live Chat]
+      summary: Send an agent message on a claimed ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Message sent
+
+  /admin/live-chat/{ticket}/typing:
+    post:
+      tags: [Admin – Live Chat]
+      summary: Broadcast an agent typing indicator
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveChatTypingRequest'
+      responses:
+        "200":
+          description: Typing event broadcast
+
+  /admin/live-chat/{ticket}/end:
+    post:
+      tags: [Admin – Live Chat]
+      summary: End the chat and resolve the ticket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketParam'
+      responses:
+        "200":
+          description: Chat ended, ticket marked resolved
+
+  ################################################################
+  # ADMIN — BLOG
+  ################################################################
+
+  /admin/blog:
+    get:
+      tags: [Admin – Blog]
+      summary: List all posts regardless of status (drafts + published)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, published] }
+        - name: per_page
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Paginated posts
+    post:
+      tags: [Admin – Blog]
+      summary: Create a new blog post (draft by default)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BlogPostCreateRequest'
+      responses:
+        "201":
+          description: Post created
+
+  /admin/blog/{blogPost}:
+    get:
+      tags: [Admin – Blog]
+      summary: View a single post (any status) for editing
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogPost
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Post detail
+    put:
+      tags: [Admin – Blog]
+      summary: Update an existing post
+      description: >
+        Setting status to `published` for the first time stamps
+        published_at (defaulting to now); reverting to `draft` clears it.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogPost
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BlogPostUpdateRequest'
+      responses:
+        "200":
+          description: Post updated
+    delete:
+      tags: [Admin – Blog]
+      summary: Delete a post (also removes its cover image from storage)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogPost
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Post deleted
+
+  /admin/blog/categories:
+    get:
+      tags: [Admin – Blog]
+      summary: List all categories regardless of published post count
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All categories
+    post:
+      tags: [Admin – Blog]
+      summary: Create a category
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlogCategoryRequest'
+      responses:
+        "201":
+          description: Category created
+
+  /admin/blog/categories/{blogCategory}:
+    patch:
+      tags: [Admin – Blog]
+      summary: Update a category
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogCategory
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlogCategoryRequest'
+      responses:
+        "200":
+          description: Category updated
+    delete:
+      tags: [Admin – Blog]
+      summary: Delete a category (posts in it are set to no category, not deleted)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogCategory
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Category deleted
+
+  /admin/blog/tags:
+    get:
+      tags: [Admin – Blog]
+      summary: List all tags regardless of published post count
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All tags
+    post:
+      tags: [Admin – Blog]
+      summary: Create a tag
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlogTagRequest'
+      responses:
+        "201":
+          description: Tag created
+
+  /admin/blog/tags/{blogTag}:
+    delete:
+      tags: [Admin – Blog]
+      summary: Delete a tag (detached from all posts first)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: blogTag
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Tag deleted
+
+  ################################################################
+  # ADMIN — CERTIFICATES
+  ################################################################
+
+  /admin/certificates:
+    get:
+      tags: [Admin – Certificates]
+      summary: List all certificates across all users
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated certificate list (25 per page)
+
+  /admin/certificates/{certificate}/revoke:
+    patch:
+      tags: [Admin – Certificates]
+      summary: Revoke a certificate
+      description: Also busts the 60-second public verify cache so a QR scan reflects the revocation immediately.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: certificate
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Certificate revoked
+
+  /admin/certificates/{certificate}/regenerate:
+    post:
+      tags: [Admin – Certificates]
+      summary: Regenerate a certificate's PDF
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: certificate
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: PDF regenerated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  path: { type: string }
+
+  ################################################################
+  # ADMIN — WAITLIST
+  ################################################################
+
+  /admin/waitlist:
+    get:
+      tags: [Admin – Waitlist]
+      summary: List all waitlist entries ordered by position
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Paginated waitlist entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WaitlistEntry'
+
+  /admin/waitlist/stats:
+    get:
+      tags: [Admin – Waitlist]
+      summary: Waitlist summary statistics (totals, by city, by budget)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Waitlist stats
+
+  /admin/waitlist/{waitlist}/invite:
+    post:
+      tags: [Admin – Waitlist]
+      summary: Mark a waitlist entry as invited
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: waitlist
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Marked as invited
+
+  /admin/waitlist/{waitlist}:
+    delete:
+      tags: [Admin – Waitlist]
+      summary: Remove a waitlist entry (closes the position gap for entries below it)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: waitlist
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Entry removed
 
   ################################################################
   # WEBHOOKS (public — no JWT)
