@@ -9,6 +9,11 @@ mkdir -p storage/app/public \
          storage/logs \
          bootstrap/cache
 
+# ── Render nginx config: substitute the real $PORT it assigns at runtime ────
+PORT="${PORT:-8000}"
+mkdir -p /etc/nginx/conf.d
+sed "s/__PORT__/${PORT}/" /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
+
 # ── Laravel bootstrap ─────────────────────────────────────────────────────────
 php artisan config:clear
 php artisan cache:clear
