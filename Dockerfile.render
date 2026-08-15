@@ -30,14 +30,17 @@ RUN composer install --optimize-autoloader --no-dev \
     && if [ -d "database/seeders/images/lands" ]; then \
         cp -r database/seeders/images/lands/* storage/app/public/seed/lands/ 2>/dev/null || true; \
        fi \
-    && rm -rf /etc/nginx/sites-enabled/default \
     && chown -R www-data:www-data /var/www/html \
     && chmod -R 775 storage bootstrap/cache \
     && chmod +x /entrypoint.sh
 
-# Render assigns the external port dynamically via $PORT at container start —
-# EXPOSE here is documentation only, entrypoint.sh renders the real nginx
-# config from the template using whatever $PORT actually is at runtime.
+# nginx (not php-fpm) is what serves HTTP traffic to the outside world;
+# it listens on $PORT (defaulted to 8000 in entrypoint.render.sh) and
+# proxies PHP requests to php-fpm on 127.0.0.1:9000 internally.
 EXPOSE 8000
+
+# supervisord.render.conf runs as root — nginx needs root to bind the port
+# and write its pid/log files; php-fpm still runs its worker pool as www-data
+# via the base image's own www.conf, so this doesn't run app code as root.
 
 CMD ["/entrypoint.sh"]

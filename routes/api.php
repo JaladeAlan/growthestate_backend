@@ -23,10 +23,6 @@ Route::post('/paystack/webhook', [PaystackWebhookController::class, 'handle']);
 Route::post('/monnify/webhook',  [MonnifyWebhookController::class,  'handle']);
 Route::post('/opay/webhook',     [OpayWebhookController::class,     'handle'])->name('opay.webhook');
 
-// ── OPay cashier redirects (no auth — OPay redirects the browser here) ───────
-Route::get('/deposit/opay/return', [OpayWebhookController::class, 'returnUrl'])->name('opay.return');
-Route::get('/deposit/opay/cancel', [OpayWebhookController::class, 'cancel'])->name('opay.cancel');
-
 // ── Everything else: available at both /api/... and /api/v1/... ─────────────
 require __DIR__ . '/api_routes.php';
 
