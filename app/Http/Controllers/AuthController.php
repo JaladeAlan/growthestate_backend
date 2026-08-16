@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ResolvesAccountStatus;
 use App\Models\User;
 use App\Models\Referral;
 use Illuminate\Http\Request;
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\Cookie;
 
 class AuthController extends Controller
 {
+    use ResolvesAccountStatus;
+
     // ─────────────────────────────────────────────────────────────────────────
     // AUTH COOKIES
     // ─────────────────────────────────────────────────────────────────────────
@@ -295,9 +298,25 @@ class AuthController extends Controller
 
         $role = $user->is_admin ? 'admin' : 'user';
 
+        // Include the same user shape /me returns so the frontend can use
+        // this response directly instead of needing a follow-up /me call
+        // on every login (see frontend todo doc #2/#28).
+        $userPayload = $user->makeHidden([
+            'password',
+            'transaction_pin',
+            'pin_reset_code',
+        ]);
+        $userPayload->pin_is_set      = $this->userHasPin($user);
+        $userPayload->is_kyc_verified = $this->isKycVerified($user);
+        $userPayload->kyc_status      = $this->resolveKycStatus($user);
+
         return $this->attachCookies(
             $this->sendSuccessResponse(
-                ['token' => $token, 'expires_at' => $this->tokenExpiresAtMs()],
+                [
+                    'token'      => $token,
+                    'expires_at' => $this->tokenExpiresAtMs(),
+                    'user'       => $userPayload,
+                ],
                 'Login successful'
             ),
             $this->buildAuthCookies($token, $role)

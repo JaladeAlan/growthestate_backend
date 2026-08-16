@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\ResolvesAccountStatus;
 use App\Models\Purchase;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,8 @@ use Illuminate\Support\Facades\Http;
  */
 class ProfileController extends Controller
 {
+    use ResolvesAccountStatus;
+
     // =========================================================================
     // GET /me
     // =========================================================================
@@ -189,52 +192,7 @@ class ProfileController extends Controller
     // =========================================================================
     // PRIVATE HELPERS
     // =========================================================================
-
-    private function userHasPin($user): bool
-    {
-        return !empty($user->transaction_pin);
-    }
-
-    private function isKycVerified($user): bool
-    {
-        return $this->resolveKycStatus($user) === 'approved';
-    }
-
-    private function resolveKycStatus($user): string
-    {
-        // If the user model carries a direct kyc_status column, trust it.
-        if (!empty($user->kyc_status)) {
-            return $user->kyc_status;
-        }
-
-        // Otherwise check the kyc_verifications table for the latest record.
-        $kyc = \App\Models\KycVerification::where('user_id', $user->id)
-            ->latest()
-            ->value('status');
-
-        return $kyc ?? 'none';
-    }
-
-    /**
-     * Returns a human-readable list of reasons why the user cannot transact.
-     * Empty array means they are fully cleared.
-     */
-    private function blockingReasons(bool $hasPin, string $kycStatus): array
-    {
-        $reasons = [];
-
-        if (!$hasPin) {
-            $reasons[] = 'Transaction PIN not set.';
-        }
-
-        match ($kycStatus) {
-            'none'     => $reasons[] = 'KYC verification not submitted.',
-            'pending'  => $reasons[] = 'KYC verification is under review.',
-            'rejected' => $reasons[] = 'KYC verification was rejected. Please resubmit.',
-            'resubmit' => $reasons[] = 'KYC resubmission required.',
-            default    => null,
-        };
-
-        return $reasons;
-    }
+    // userHasPin / isKycVerified / resolveKycStatus / blockingReasons now
+    // live in Concerns\ResolvesAccountStatus (used via the trait above) —
+    // extracted so AuthController::login() can share the same logic.
 }
