@@ -169,6 +169,21 @@ describe('Withdrawal request', function () {
             ->assertStatus(400);
     });
 
+    it('rejects when the transaction PIN is wrong, and leaves the balance untouched', function () {
+        $user = kycApprovedUser(['balance_kobo' => 10_000_000]);
+
+        $this->actingAs($user, 'sanctum')
+            ->postJson('/api/withdraw', [
+                'amount'          => 5_000_000,
+                'transaction_pin' => '9999', // correct pin is '1234'
+            ])
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => 'Invalid transaction PIN.']);
+
+        $this->assertDatabaseMissing('withdrawals', ['user_id' => $user->id]);
+        $this->assertDatabaseHas('users', ['id' => $user->id, 'balance_kobo' => 10_000_000]);
+    });
+
     it('enforces the daily withdrawal limit', function () {
         $user = kycApprovedUser([
             'balance_kobo'               => 100_000_000,
@@ -183,6 +198,46 @@ describe('Withdrawal request', function () {
             ])
             ->assertStatus(422)
             ->assertJsonFragment(['message' => 'Daily withdrawal limit of ₦500,000.00 reached. Remaining today: ₦0.00.']);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Withdrawal status lookup (user)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Withdrawal status lookup', function () {
+
+    it("returns 404 when a user requests another user's withdrawal by reference", function () {
+        $owner    = kycApprovedUser();
+        $stranger = kycApprovedUser();
+
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $owner->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'pending',
+            'reference'   => 'WD-OWNER-ONLY-001',
+        ]);
+
+        $this->actingAs($stranger, 'sanctum')
+            ->getJson("/api/withdrawals/{$withdrawal->reference}")
+            ->assertStatus(404);
+    });
+
+    it('returns the withdrawal when the requester is its owner', function () {
+        $owner = kycApprovedUser();
+
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $owner->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'pending',
+            'reference'   => 'WD-OWNER-002',
+        ]);
+
+        $this->actingAs($owner, 'sanctum')
+            ->getJson("/api/withdrawals/{$withdrawal->reference}")
+            ->assertStatus(200)
+            ->assertJsonPath('reference', 'WD-OWNER-002')
+            ->assertJsonPath('status', 'pending');
     });
 });
 
@@ -324,6 +379,44 @@ describe('Admin withdrawal approval', function () {
         ]);
     });
 
+    it('rejects a failed withdrawal (not just pending) and refunds the user balance', function () {
+        Notification::fake();
+
+        $admin = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_admin'          => true,
+        ]);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+
+        // 'failed' happens when a prior Paystack transfer call errored
+        // (see the adminApprove failure test above) — adminReject explicitly
+        // allows rejecting from here too, not just 'pending'.
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 4_000_000,
+            'status'      => 'failed',
+            'reference'   => 'WD-REJECT-FAILED-001',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->postJson("/api/admin/withdrawals/{$withdrawal->id}/reject", [
+                'reason' => 'Manual review after failed transfer.',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'rejected',
+        ]);
+
+        $this->assertDatabaseHas('users', [
+            'id'           => $user->id,
+            'balance_kobo' => 4_000_000,
+        ]);
+    });
+
     it('cannot approve a withdrawal that is not pending', function () {
         $admin = User::factory()->create(['email_verified_at' => now(), 'is_admin' => true]);
         $user  = kycApprovedUser(['balance_kobo' => 0]);
@@ -351,6 +444,115 @@ describe('Admin withdrawal approval', function () {
 
         $this->actingAs($regularUser, 'api')
             ->postJson("/api/admin/withdrawals/{$withdrawal->id}/approve")
+            ->assertStatus(403);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin batch withdrawal approval
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Admin batch withdrawal approval', function () {
+
+    it('approves every pending withdrawal in one call', function () {
+        Http::fake([
+            'api.paystack.co/transferrecipient' => Http::response([
+                'status' => true,
+                'data'   => ['recipient_code' => 'RCP_test123'],
+            ], 200),
+            'api.paystack.co/transfer' => Http::response([
+                'status' => true,
+                'data'   => ['transfer_code' => 'TRF_test456'],
+            ], 200),
+        ]);
+
+        $admin = User::factory()->create(['email_verified_at' => now(), 'is_admin' => true]);
+        $userA = kycApprovedUser(['balance_kobo' => 0]);
+        $userB = kycApprovedUser(['balance_kobo' => 0]);
+
+        $wdA = Withdrawal::create([
+            'user_id' => $userA->id, 'amount_kobo' => 5_000_000,
+            'status' => 'pending', 'reference' => 'WD-BATCH-A',
+        ]);
+        $wdB = Withdrawal::create([
+            'user_id' => $userB->id, 'amount_kobo' => 6_000_000,
+            'status' => 'pending', 'reference' => 'WD-BATCH-B',
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/admin/withdrawals/approve-all');
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('approved', 2)
+            ->assertJsonPath('failed', 0);
+
+        // Batch approval flips pending -> processing per item, same as the
+        // single-approve endpoint; only the webhook later marks 'completed'.
+        $this->assertDatabaseHas('withdrawals', ['id' => $wdA->id, 'status' => 'processing']);
+        $this->assertDatabaseHas('withdrawals', ['id' => $wdB->id, 'status' => 'processing']);
+
+        Http::assertSentCount(4); // recipient + transfer, per withdrawal
+    });
+
+    it('marks only the withdrawal whose Paystack transfer failed as failed, leaving the rest processing', function () {
+        $admin = User::factory()->create(['email_verified_at' => now(), 'is_admin' => true]);
+        $goodUser = kycApprovedUser(['balance_kobo' => 0, 'account_number' => '0111111111']);
+        $badUser  = kycApprovedUser(['balance_kobo' => 0, 'account_number' => '0222222222']);
+
+        $good = Withdrawal::create([
+            'user_id' => $goodUser->id, 'amount_kobo' => 5_000_000,
+            'status' => 'pending', 'reference' => 'WD-BATCH-GOOD',
+        ]);
+        $bad = Withdrawal::create([
+            'user_id' => $badUser->id, 'amount_kobo' => 5_000_000,
+            'status' => 'pending', 'reference' => 'WD-BATCH-BAD',
+        ]);
+
+        Http::fake([
+            'api.paystack.co/transferrecipient' => Http::response([
+                'status' => true,
+                'data'   => ['recipient_code' => 'RCP_test123'],
+            ], 200),
+            'api.paystack.co/transfer' => function ($request) use ($bad) {
+                $isBad = str_contains($request->body(), $bad->reference);
+                return $isBad
+                    ? Http::response(['status' => false, 'message' => 'Invalid account.'], 400)
+                    : Http::response(['status' => true, 'data' => ['transfer_code' => 'TRF_ok']], 200);
+            },
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/admin/withdrawals/approve-all');
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('approved', 1)
+            ->assertJsonPath('failed', 1);
+
+        $body = $response->json();
+        expect($body['details']['approved'])->toContain('WD-BATCH-GOOD');
+        expect(collect($body['details']['failed'])->pluck('reference')->all())
+            ->toContain('WD-BATCH-BAD');
+
+        $this->assertDatabaseHas('withdrawals', ['id' => $good->id, 'status' => 'processing']);
+        $this->assertDatabaseHas('withdrawals', ['id' => $bad->id, 'status' => 'failed']);
+    });
+
+    it('reports no pending withdrawals to process when the queue is empty', function () {
+        $admin = User::factory()->create(['email_verified_at' => now(), 'is_admin' => true]);
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/admin/withdrawals/approve-all')
+            ->assertStatus(200)
+            ->assertJsonPath('message', 'No pending withdrawals to process.');
+    });
+
+    it('blocks a non-admin from accessing the batch approval endpoint', function () {
+        $regularUser = User::factory()->create(['email_verified_at' => now(), 'is_admin' => false]);
+
+        $this->actingAs($regularUser, 'api')
+            ->postJson('/api/admin/withdrawals/approve-all')
             ->assertStatus(403);
     });
 });
@@ -393,6 +595,46 @@ describe('Paystack withdrawal webhook', function () {
         ]);
     });
 
+    it('is idempotent: a duplicate transfer.success webhook does not double-notify or re-process', function () {
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+
+        // Already completed by a first delivery of this same webhook —
+        // processed_at set, same as the guard the deposit webhook uses.
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'completed',
+            'reference'   => 'WD-WEBHOOK-DUP-001',
+            'processed_at' => now(),
+        ]);
+
+        $payload = json_encode([
+            'event' => 'transfer.success',
+            'data'  => [
+                'reference' => 'WD-WEBHOOK-DUP-001',
+                'status'    => 'success',
+            ],
+        ]);
+        $sig = hash_hmac('sha512', $payload, 'test-secret');
+
+        $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => $sig,
+        ])->assertStatus(200);
+
+        // Still completed, balance untouched, exactly one notification (from
+        // the setup above, none since we didn't go through the controller
+        // for the first send — so zero should be sent by the duplicate).
+        $this->assertDatabaseHas('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'completed',
+        ]);
+
+        Notification::assertNothingSent();
+    });
+
     it('refunds the user on transfer.failed', function () {
         Notification::fake();
         config(['services.paystack.secret_key' => 'test-secret']);
@@ -427,6 +669,112 @@ describe('Paystack withdrawal webhook', function () {
         $this->assertDatabaseHas('users', [
             'id'           => $user->id,
             'balance_kobo' => 5_000_000, // refunded
+        ]);
+    });
+
+    it('refunds the user on transfer.reversed (bank-side reversal after an initial success)', function () {
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'processing',
+            'reference'   => 'WD-REVERSED-WEBHOOK-001',
+        ]);
+
+        $payload = json_encode([
+            'event' => 'transfer.reversed',
+            'data'  => [
+                'reference' => 'WD-REVERSED-WEBHOOK-001',
+                'status'    => 'reversed',
+            ],
+        ]);
+        $sig = hash_hmac('sha512', $payload, 'test-secret');
+
+        $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => $sig,
+        ])->assertStatus(200);
+
+        // Before the fix: neither the 'success' nor 'failed' branch matched
+        // 'reversed', so this withdrawal stayed stuck in 'processing' forever
+        // with no refund and no log entry.
+        $this->assertDatabaseHas('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'rejected',
+        ]);
+
+        $this->assertDatabaseHas('users', [
+            'id'           => $user->id,
+            'balance_kobo' => 5_000_000, // refunded
+        ]);
+    });
+
+    it('does not double-refund a transfer.reversed webhook that arrives after transfer.failed already processed it', function () {
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'processing',
+            'reference'   => 'WD-DUPLICATE-WEBHOOK-001',
+        ]);
+
+        $payload = fn (string $status) => json_encode([
+            'event' => "transfer.{$status}",
+            'data'  => [
+                'reference' => 'WD-DUPLICATE-WEBHOOK-001',
+                'status'    => $status,
+            ],
+        ]);
+
+        $failedPayload = $payload('failed');
+        $this->postJson('/api/paystack/webhook', json_decode($failedPayload, true), [
+            'x-paystack-signature' => hash_hmac('sha512', $failedPayload, 'test-secret'),
+        ])->assertStatus(200);
+
+        $reversedPayload = $payload('reversed');
+        $this->postJson('/api/paystack/webhook', json_decode($reversedPayload, true), [
+            'x-paystack-signature' => hash_hmac('sha512', $reversedPayload, 'test-secret'),
+        ])->assertStatus(200);
+
+        // Only refunded once — the idempotency guard (processed_at) on the
+        // first webhook must block the second from refunding again.
+        $this->assertDatabaseHas('users', [
+            'id'           => $user->id,
+            'balance_kobo' => 5_000_000,
+        ]);
+    });
+
+    it('rejects a withdrawal transfer webhook with an invalid signature', function () {
+        config(['services.paystack.secret_key' => 'real-secret']);
+
+        $user = kycApprovedUser(['balance_kobo' => 0]);
+        $withdrawal = Withdrawal::create([
+            'user_id'     => $user->id,
+            'amount_kobo' => 5_000_000,
+            'status'      => 'processing',
+            'reference'   => 'WD-BAD-SIG-001',
+        ]);
+
+        $payload = json_encode([
+            'event' => 'transfer.success',
+            'data'  => ['reference' => 'WD-BAD-SIG-001', 'status' => 'success'],
+        ]);
+
+        $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => 'not-the-real-signature',
+        ])->assertStatus(403);
+
+        // Nothing should have been processed — status untouched
+        $this->assertDatabaseHas('withdrawals', [
+            'id'     => $withdrawal->id,
+            'status' => 'processing',
         ]);
     });
 });

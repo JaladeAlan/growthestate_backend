@@ -291,6 +291,159 @@ describe('Paystack deposit webhook', function () {
         $this->postJson('/api/paystack/webhook', json_decode($payload, true))
             ->assertStatus(400);
     });
+
+    it('does not credit the wallet and flags the deposit for review when the webhook amount is lower than expected', function () {
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'balance_kobo'      => 0,
+        ]);
+
+        $deposit = Deposit::create([
+            'user_id'         => $user->id,
+            'reference'       => 'DEP-underpaid-01',
+            'amount_kobo'     => 1_000_000,
+            'transaction_fee' => 20_000,
+            'total_kobo'      => 1_020_000,
+            'gateway'         => 'paystack',
+            'status'          => 'pending',
+        ]);
+
+        // A signed, genuine Paystack webhook — but reporting a lower amount
+        // than the deposit's total_kobo (e.g. the customer's authorization
+        // was for less than expected).
+        $payload = json_encode([
+            'event' => 'charge.success',
+            'data'  => [
+                'reference' => 'DEP-underpaid-01',
+                'amount'    => 500_000, // well below total_kobo
+                'status'    => 'success',
+                'metadata'  => [],
+            ],
+        ]);
+
+        $sig = paystackSig($payload);
+
+        // The signature is valid, so this must not be rejected outright —
+        // it must be silently swallowed into a review flag rather than a
+        // credit, and still return 200 so Paystack doesn't retry.
+        $response = $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => $sig,
+        ]);
+
+        $response->assertStatus(200);
+
+        $this->assertDatabaseHas('deposits', [
+            'id'           => $deposit->id,
+            'status'       => 'review',
+            'processed_at' => null,
+        ]);
+
+        // Wallet must remain untouched — this is the core of the bug: before
+        // the fix, the webhook's amount was never compared against the
+        // deposit's expected total, so this branch would have unconditionally
+        // credited the user's full deposit amount regardless of what was
+        // actually paid.
+        $this->assertDatabaseHas('users', ['id' => $user->id, 'balance_kobo' => 0]);
+        $this->assertDatabaseMissing('ledger_entries', ['reference' => 'DEP-underpaid-01']);
+
+        Notification::assertNothingSent();
+    });
+
+    it('does not credit the wallet when the webhook amount is higher than expected', function () {
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'balance_kobo'      => 0,
+        ]);
+
+        Deposit::create([
+            'user_id'         => $user->id,
+            'reference'       => 'DEP-overpaid-01',
+            'amount_kobo'     => 1_000_000,
+            'transaction_fee' => 20_000,
+            'total_kobo'      => 1_020_000,
+            'gateway'         => 'paystack',
+            'status'          => 'pending',
+        ]);
+
+        $payload = json_encode([
+            'event' => 'charge.success',
+            'data'  => [
+                'reference' => 'DEP-overpaid-01',
+                'amount'    => 5_000_000, // well above total_kobo
+                'status'    => 'success',
+                'metadata'  => [],
+            ],
+        ]);
+
+        $sig = paystackSig($payload);
+
+        $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => $sig,
+        ])->assertStatus(200);
+
+        $this->assertDatabaseHas('deposits', [
+            'reference' => 'DEP-overpaid-01',
+            'status'    => 'review',
+        ]);
+
+        $this->assertDatabaseHas('users', ['id' => $user->id, 'balance_kobo' => 0]);
+    });
+
+    it('still credits correctly when the webhook amount exactly matches total_kobo', function () {
+        // Regression guard for the fix itself: confirms the comparison is
+        // against total_kobo (gross, fee included) and not amount_kobo
+        // (net) — an off-by-the-fee-amount mismatch here would reject every
+        // genuine deposit.
+        Notification::fake();
+        config(['services.paystack.secret_key' => 'test-secret']);
+
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'balance_kobo'      => 0,
+        ]);
+
+        Deposit::create([
+            'user_id'         => $user->id,
+            'reference'       => 'DEP-exact-01',
+            'amount_kobo'     => 750_000,
+            'transaction_fee' => 15_000,
+            'total_kobo'      => 765_000,
+            'gateway'         => 'paystack',
+            'status'          => 'pending',
+        ]);
+
+        $payload = json_encode([
+            'event' => 'charge.success',
+            'data'  => [
+                'reference' => 'DEP-exact-01',
+                'amount'    => 765_000, // exactly total_kobo
+                'status'    => 'success',
+                'metadata'  => [],
+            ],
+        ]);
+
+        $sig = paystackSig($payload);
+
+        $this->postJson('/api/paystack/webhook', json_decode($payload, true), [
+            'x-paystack-signature' => $sig,
+        ])->assertStatus(200);
+
+        $this->assertDatabaseHas('deposits', [
+            'reference' => 'DEP-exact-01',
+            'status'    => 'completed',
+        ]);
+
+        // Wallet is credited with the net amount (750_000), not the gross
+        // total that was charged (765_000) — the fee never reaches the
+        // wallet.
+        $this->assertDatabaseHas('users', ['id' => $user->id, 'balance_kobo' => 750_000]);
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

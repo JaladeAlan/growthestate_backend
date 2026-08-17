@@ -67,6 +67,17 @@ class PaystackWebhookController extends Controller
                 return;
             }
 
+            if ($amountKobo !== (int) $deposit->total_kobo) {
+                Log::critical('Paystack charge.success: amount mismatch', [
+                    'reference' => $reference,
+                    'expected'  => $deposit->total_kobo,
+                    'paid'      => $amountKobo,
+                ]);
+
+                $deposit->update(['status' => Deposit::STATUS_REVIEW]);
+                return;
+            }
+
             $user = User::lockForUpdate()->find($deposit->user_id);
             if (! $user) {
                 Log::error('Paystack charge.success: user not found', ['user_id' => $deposit->user_id]);

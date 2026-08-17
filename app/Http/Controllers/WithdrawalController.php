@@ -522,10 +522,14 @@ class WithdrawalController extends Controller
                     'user_id'   => $locked->user_id,
                 ]);
 
-            } elseif ($status === 'failed') {
-                $this->refundWithdrawal($locked, 'Transfer failed on Paystack.');
+            } elseif ($status === 'failed' || $status === 'reversed') {
+                $reason = $status === 'reversed'
+                    ? 'Transfer reversed by receiving bank.'
+                    : 'Transfer failed on Paystack.';
 
-                Log::warning('Withdrawal failed via Paystack webhook — refunded', [
+                $this->refundWithdrawal($locked, $reason);
+
+                Log::warning("Withdrawal {$status} via Paystack webhook — refunded", [
                     'reference' => $locked->reference,
                     'user_id'   => $locked->user_id,
                 ]);
