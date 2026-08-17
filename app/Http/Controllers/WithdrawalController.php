@@ -10,7 +10,6 @@ use App\Notifications\WithdrawalRejectedNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -101,14 +100,6 @@ class WithdrawalController extends Controller
             'amount'          => 'required|integer|min:500000',
             'transaction_pin' => 'required|digits:4',
         ]);
-
-        if (! $user->transaction_pin) {
-            return response()->json(['message' => 'Transaction PIN not set. Please set one in settings.'], 422);
-        }
-
-        if (! Hash::check($request->transaction_pin, $user->transaction_pin)) {
-            return response()->json(['message' => 'Invalid transaction PIN.'], 422);
-        }
 
         if (! $user->is_kyc_verified) {
             return response()->json(['error' => 'KYC verification is required before withdrawing funds.'], 403);

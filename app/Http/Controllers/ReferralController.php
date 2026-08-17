@@ -92,18 +92,39 @@ class ReferralController extends Controller
      */
     public function claimReward(int $rewardId)
     {
-        $reward = ReferralReward::where('id', $rewardId)
+        // Existence/ownership check up front so a bad ID returns 404 before
+        // opening a transaction. The authoritative claimed-state check
+        // happens again below, inside the transaction, under a row lock.
+        $exists = ReferralReward::where('id', $rewardId)
             ->where('user_id', auth()->id())
-            ->firstOrFail();
+            ->exists();
 
-        if ($reward->claimed) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Reward already claimed',
-            ], 400);
+        if (! $exists) {
+            abort(404);
         }
 
-        DB::transaction(function () use ($reward) {
+        $reward = null;
+        $alreadyClaimed = false;
+
+        DB::transaction(function () use ($rewardId, &$reward, &$alreadyClaimed) {
+            // Lock the reward row so two concurrent claim requests (double
+            // tap, replay, scripted burst) queue behind each other here
+            // instead of both reading claimed=false and both crediting.
+            $reward = ReferralReward::where('id', $rewardId)
+                ->where('user_id', auth()->id())
+                ->lockForUpdate()
+                ->first();
+
+            if (! $reward) {
+                return;
+            }
+
+            // Re-check inside the lock — this is the authoritative guard.
+            if ($reward->claimed) {
+                $alreadyClaimed = true;
+                return;
+            }
+
             $reward->claim();
 
             switch ($reward->reward_type) {
@@ -139,6 +160,17 @@ class ReferralController extends Controller
                     break;
             }
         });
+
+        if (! $reward) {
+            abort(404);
+        }
+
+        if ($alreadyClaimed) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Reward already claimed',
+            ], 400);
+        }
 
         return response()->json([
             'success' => true,

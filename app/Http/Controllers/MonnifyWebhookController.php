@@ -45,13 +45,19 @@ class MonnifyWebhookController extends Controller
 
         $data = $payload['eventData'];
 
-        $reference  = $data['paymentReference'] ?? null;
-        $amountPaid = (int) round($data['amountPaid'] * 100); // convert to kobo
+        $reference = $data['paymentReference'] ?? null;
 
         if (! $reference) {
             Log::warning('Missing payment reference');
             return response()->json(['status' => 'missing_reference'], 400);
         }
+
+        if (! isset($data['amountPaid']) || ! is_numeric($data['amountPaid'])) {
+            Log::warning('Missing or non-numeric amountPaid', ['reference' => $reference]);
+            return response()->json(['status' => 'missing_amount'], 400);
+        }
+
+        $amountPaid = self::nairaToKobo($data['amountPaid']);
 
         $deposit = Deposit::where('reference', $reference)->first();
 
@@ -143,5 +149,26 @@ class MonnifyWebhookController extends Controller
         });
 
         return response()->json(['status' => 'processed']);
+    }
+
+    /**
+     * Convert a naira amount (int|float|numeric string, as decoded from
+     * webhook JSON) to an integer kobo value without relying on float
+     * multiplication, which can produce rounding artifacts like
+     * 1234.56 * 100 === 123455.99999999999.
+     *
+     * sprintf('%.2f', ...) forces PHP to round/format to exactly two
+     * decimal places as a string first, so the subsequent integer math
+     * operates on digits rather than an imprecise binary float.
+     */
+    private static function nairaToKobo(int|float|string $amount): int
+    {
+        $fixed = sprintf('%.2f', (float) $amount); // e.g. "1234.56"
+        [$naira, $kobo] = explode('.', $fixed);
+
+        $sign  = str_starts_with($naira, '-') ? -1 : 1;
+        $naira = ltrim($naira, '-');
+
+        return $sign * ((int) $naira * 100 + (int) $kobo);
     }
 }

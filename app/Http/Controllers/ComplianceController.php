@@ -87,6 +87,10 @@ class ComplianceController extends Controller
             // Lock the row for the duration of the transaction
             $screening = UserScreening::lockForUpdate()->findOrFail($screening->id);
 
+            if ($screening->reviewed_at !== null) {
+                abort(409, 'This screening has already been reviewed.');
+            }
+
             $screening->update([
                 'status'      => 'blocked',
                 'reviewed_by' => $request->user()->name,

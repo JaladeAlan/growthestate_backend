@@ -226,7 +226,8 @@ class MarketplaceController extends Controller
     /**
      * PATCH /marketplace/{listing}/offers/{offer}/accept
      *
-     * PIN check and auth happen here; all trade logic is delegated
+     * Auth + ownership checks happen here; PIN verification is handled by
+     * the 'check.pin' route middleware. All trade logic is delegated
      * to MarketplaceTradeService::execute().
      */
     public function acceptOffer(Request $request, MarketplaceListing $listing, MarketplaceOffer $offer)
@@ -238,14 +239,6 @@ class MarketplaceController extends Controller
 
         if ($offer->status !== 'pending') {
             abort(422, 'This offer is no longer pending.');
-        }
-
-        $request->validate([
-            'transaction_pin' => 'required|digits:4',
-        ]);
-
-        if (! \Hash::check($request->transaction_pin, $seller->transaction_pin)) {
-            throw ValidationException::withMessages(['transaction_pin' => 'Incorrect PIN.']);
         }
 
         $summary = $this->tradeService->execute($listing, $offer);

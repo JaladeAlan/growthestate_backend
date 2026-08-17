@@ -163,7 +163,7 @@ Route::middleware(['jwt.custom'])->group(function () {
 
         // ── Deposits ──────────────────────────────────────────────────────────
         Route::post('/deposit', [DepositController::class, 'initiateDeposit'])
-            ->middleware(['idempotent', 'throttle:10,60', 'screening.transact', 'audit.log']);
+            ->middleware(['idempotent', 'throttle:10,60', 'screening.transact', 'suspended', 'audit.log']);
         Route::get('/deposit/verify/{reference}', [DepositController::class, 'verifyDeposit']);
         Route::get('/paystack/banks',             [DepositController::class, 'banks']);
         Route::post('/paystack/resolve-account',  [DepositController::class, 'resolveAccount'])
@@ -171,7 +171,7 @@ Route::middleware(['jwt.custom'])->group(function () {
 
         // ── Withdrawals ───────────────────────────────────────────────────────
         Route::post('/withdraw', [WithdrawalController::class, 'requestWithdrawal'])
-            ->middleware(['idempotent', 'throttle:5,60', 'screening.transact', 'audit.log']);
+            ->middleware(['idempotent', 'throttle:5,60', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
         Route::get('/withdrawals/{reference}', [WithdrawalController::class, 'getWithdrawalStatus']);
 
         // ── Transactions ──────────────────────────────────────────────────────

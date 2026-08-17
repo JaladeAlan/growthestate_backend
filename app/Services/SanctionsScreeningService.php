@@ -66,13 +66,38 @@ class SanctionsScreeningService
             ->whereNull('reviewed_at')
             ->first();
 
+        $shouldEscalate = false;
+
         if ($existing) {
+            $previousStatus = $existing->status;
+
+            // A case still awaiting human review must never be silently
+            // resolved by an automated re-screen (e.g. the monthly
+            // sanctions:rescreen job). Only ComplianceController's
+            // clear()/block() endpoints — which require reviewer notes
+            // and write an AdminActionLog entry — may close a pending
+            // case. An automated run may still ESCALATE severity (e.g.
+            // flagged -> blocked) since that's new information the
+            // reviewer needs, but it may never downgrade or auto-clear
+            // a case that's still sitting in the compliance queue.
+            $severity       = ['clear' => 0, 'flagged' => 1, 'blocked' => 2];
+            $resolvedStatus = $severity[$status] > $severity[$previousStatus]
+                ? $status
+                : $previousStatus;
+
             $existing->update([
                 'trigger' => $trigger,
                 'matches' => $matches,
-                'status'  => $status,
+                'status'  => $resolvedStatus,
             ]);
+
             $screening = $existing;
+            $status    = $resolvedStatus;
+
+            // Only escalate (re-notify/re-alert) if this run genuinely made
+            // things worse — not on every routine rescan that reaffirms an
+            // already-pending status, which would spam Telegram/the user.
+            $shouldEscalate = $resolvedStatus !== $previousStatus;
         } else {
             $screening = UserScreening::create([
                 'user_id' => $user->id,
@@ -80,6 +105,8 @@ class SanctionsScreeningService
                 'trigger' => $trigger,
                 'matches' => $matches,
             ]);
+
+            $shouldEscalate = in_array($status, ['flagged', 'blocked']);
         }
 
         $user->update([
@@ -87,7 +114,7 @@ class SanctionsScreeningService
             'last_screened_at' => now(),
         ]);
 
-        if (in_array($status, ['flagged', 'blocked'])) {
+        if ($shouldEscalate) {
             $this->escalate($user, $screening);
         }
 
