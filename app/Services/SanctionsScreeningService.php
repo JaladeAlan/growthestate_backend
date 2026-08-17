@@ -171,30 +171,61 @@ class SanctionsScreeningService
 
     /**
      * Fuzzy similarity score between two normalized strings (0–100).
-     * Uses similar_text + Levenshtein combination for best accuracy.
+     *
+     * Scores on the WEAKEST matching token, not a weighted average of
+     * whole-string similarity. A weighted average lets one strongly-
+     * matching token (e.g. a shared common first name) mask a weakly-
+     * matching one (a different surname) — "Ibrahim Balogun" vs "Ibrahim
+     * Al-Amin" are two different people, but a first-name match that
+     * dominates the average could still push the combined score into
+     * FLAG/BLOCK range for an innocent user. Scoring on the minimum
+     * per-token match closes that gap: a shared first name can no longer
+     * compensate for a surname that doesn't match anything on the other
+     * side.
+     *
+     * The shorter name's tokens are matched against the longer name's
+     * tokens (each shorter-side token takes its single best match from
+     * the longer side), so a genuine match against a sanctions entry with
+     * an extra middle name or alias suffix isn't penalized — every token
+     * on the shorter side still has to find a real match on the other.
      */
     private function fuzzyScore(string $a, string $b): int
     {
         if ($a === $b) return 100;
         if (empty($a) || empty($b)) return 0;
 
-        // similar_text percentage
-        similar_text($a, $b, $similarPct);
-
-        // Levenshtein distance converted to percentage
-        $maxLen = max(strlen($a), strlen($b));
-        $lev    = levenshtein($a, $b);
-        $levPct = (1 - $lev / $maxLen) * 100;
-
-        // Token sort: sort words, compare — handles "John Smith" vs "Smith John"
         $aTokens = explode(' ', $a);
         $bTokens = explode(' ', $b);
-        sort($aTokens);
-        sort($bTokens);
-        similar_text(implode(' ', $aTokens), implode(' ', $bTokens), $tokenPct);
 
-        // Weighted average — token sort gets highest weight for name matching
-        return (int) round(($similarPct * 0.25) + ($levPct * 0.25) + ($tokenPct * 0.50));
+        [$shorter, $longer] = count($aTokens) <= count($bTokens)
+            ? [$aTokens, $bTokens]
+            : [$bTokens, $aTokens];
+
+        $bestPerToken = [];
+        foreach ($shorter as $tok) {
+            $best = 0.0;
+            foreach ($longer as $other) {
+                $best = max($best, $this->tokenSimilarity($tok, $other));
+            }
+            $bestPerToken[] = $best;
+        }
+
+        return (int) round(min($bestPerToken));
+    }
+
+    /** Similarity (0–100) between two individual name tokens. */
+    private function tokenSimilarity(string $a, string $b): float
+    {
+        if ($a === $b) {
+            return 100.0;
+        }
+
+        similar_text($a, $b, $simPct);
+
+        $maxLen = max(strlen($a), strlen($b));
+        $levPct = $maxLen > 0 ? (1 - levenshtein($a, $b) / $maxLen) * 100 : 0;
+
+        return ($simPct * 0.5) + ($levPct * 0.5);
     }
 
     /**

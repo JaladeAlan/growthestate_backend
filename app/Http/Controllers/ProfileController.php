@@ -250,10 +250,28 @@ class ProfileController extends Controller
 
     /**
      * Fuzzy similarity score (0–100) between the user's identity name and
-     * the bank-resolved account name. Same token-sort + similar_text +
-     * Levenshtein approach used by SanctionsScreeningService::fuzzyScore(),
-     * kept local here to avoid coupling this identity check to the
-     * sanctions-specific service.
+     * the bank-resolved account name. Kept local here (rather than reusing
+     * SanctionsScreeningService::fuzzyScore()) to avoid coupling this
+     * identity check to the sanctions-specific service — this is a
+     * different question ("is this honestly the same person, allowing for
+     * name-order/middle-name/initials differences") from sanctions
+     * screening ("does this match a watchlist entry").
+     *
+     * Scores on the WEAKEST matching token, not a weighted average of
+     * whole-string similarity. A weighted average lets one strongly-
+     * matching token (e.g. a shared common first name) mask a weakly-
+     * matching one (a different surname) — "Chinedu Okafor" vs "Chinedu
+     * Balogun" is two different people, but a first-name match that
+     * dominates the average can still push the combined score above
+     * threshold. Scoring on the minimum per-token match closes that gap:
+     * a shared first name can no longer compensate for a surname that
+     * doesn't match anything on the other side.
+     *
+     * The shorter name's tokens are matched against the longer name's
+     * tokens (each shorter-side token takes its single best match from
+     * the longer side) so a dropped middle name or an appended suffix
+     * ("... and Co Ltd") on the longer side doesn't get penalized —
+     * every token on the shorter side still has to find a real match.
      */
     private function nameMatchScore(string $identityName, string $accountName): int
     {
@@ -268,22 +286,37 @@ class ProfileController extends Controller
             return 100;
         }
 
-        similar_text($a, $b, $similarPct);
-
-        $maxLen = max(strlen($a), strlen($b));
-        $lev    = levenshtein($a, $b);
-        $levPct = (1 - $lev / $maxLen) * 100;
-
-        // Token sort handles reordering, e.g. bank "SURNAME FIRSTNAME" vs
-        // KYC "Firstname Surname" — weighted most heavily since name-order
-        // differences are the single most common legitimate mismatch
-        // pattern between bank records and KYC data.
         $aTokens = explode(' ', $a);
         $bTokens = explode(' ', $b);
-        sort($aTokens);
-        sort($bTokens);
-        similar_text(implode(' ', $aTokens), implode(' ', $bTokens), $tokenPct);
 
-        return (int) round(($similarPct * 0.15) + ($levPct * 0.15) + ($tokenPct * 0.70));
+        [$shorter, $longer] = count($aTokens) <= count($bTokens)
+            ? [$aTokens, $bTokens]
+            : [$bTokens, $aTokens];
+
+        $bestPerToken = [];
+        foreach ($shorter as $tok) {
+            $best = 0.0;
+            foreach ($longer as $other) {
+                $best = max($best, $this->tokenSimilarity($tok, $other));
+            }
+            $bestPerToken[] = $best;
+        }
+
+        return (int) round(min($bestPerToken));
+    }
+
+    /** Similarity (0–100) between two individual name tokens. */
+    private function tokenSimilarity(string $a, string $b): float
+    {
+        if ($a === $b) {
+            return 100.0;
+        }
+
+        similar_text($a, $b, $simPct);
+
+        $maxLen = max(strlen($a), strlen($b));
+        $levPct = $maxLen > 0 ? (1 - levenshtein($a, $b) / $maxLen) * 100 : 0;
+
+        return ($simPct * 0.5) + ($levPct * 0.5);
     }
 }
