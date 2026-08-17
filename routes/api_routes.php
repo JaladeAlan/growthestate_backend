@@ -145,7 +145,8 @@ Route::middleware(['jwt.custom'])->group(function () {
         Route::get('/user/account-status', [ProfileController::class, 'accountStatus']);
         Route::get('/user/stats',          [ProfileController::class, 'stats']);
         Route::get('/user/lands',          [ProfileController::class, 'lands']);
-        Route::put('/user/bank-details',   [ProfileController::class, 'updateBankDetails']);
+        Route::put('/user/bank-details',   [ProfileController::class, 'updateBankDetails'])
+            ->middleware(['check.pin', 'audit.log']);
 
         // ── Transaction PIN ───────────────────────────────────────────────────
         Route::post('/pin/set',    [PinController::class, 'set']);
@@ -235,7 +236,8 @@ Route::middleware(['jwt.custom'])->group(function () {
         Route::delete('/marketplace/{listing}',  [MarketplaceController::class, 'destroy']);
         Route::post('/marketplace/{listing}/offers', [MarketplaceController::class, 'makeOffer'])
             ->middleware('throttle:10,60');
-        Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer'])->middleware('throttle:5,1');
+        Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer'])
+            ->middleware(['throttle:5,1', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
         Route::patch('/marketplace/{listing}/offers/{offer}/reject',   [MarketplaceController::class, 'rejectOffer']);
         Route::patch('/marketplace/{listing}/offers/{offer}/withdraw', [MarketplaceController::class, 'withdrawOffer']);
         Route::get('/marketplace/{listing}/messages',  [MarketplaceController::class, 'messages']);
