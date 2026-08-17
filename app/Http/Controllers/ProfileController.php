@@ -38,8 +38,9 @@ class ProfileController extends Controller
         $user->kyc_status       = $this->resolveKycStatus($request->user());
 
         return response()->json([
-            'success' => true,
-            'data'    => $user,
+            'success'    => true,
+            'data'       => $user,
+            'expires_at' => now()->addMinutes((int) config('jwt.ttl'))->getTimestamp() * 1000,
         ]);
     }
 
