@@ -66,22 +66,26 @@ class CertificateController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // GET /verify/{certNumber}   (PUBLIC — no auth required)
+    // GET /verify/{verifyToken}   (PUBLIC — no auth required)
     //
-    // Returns enough data for the public verify page (ResultCard) while
-    // keeping sensitive info out.
+    // Looked up by verify_token (random, unguessable) rather than
+    // cert_number (sequential — CERT-{year}-{land}-{seq} — and therefore
+    // enumerable). Response is also intentionally lean: owner_name and
+    // total_invested are financial PII that a public authenticity check
+    // doesn't need to disclose, so a browsing attacker gains nothing even
+    // if they somehow land on a valid token.
     // ─────────────────────────────────────────────────────────────────────────
-    public function verify(string $certNumber)
+    public function verify(string $verifyToken)
     {
         // Cache for 60 s to avoid hammering the DB on QR-scan bursts.
         // We cache the cert model; null means "not found / invalid".
-        $cert = Cache::remember("cert_verify_{$certNumber}", 60, function () use ($certNumber) {
-            return $this->service->verify($certNumber);
+        $cert = Cache::remember("cert_verify_{$verifyToken}", 60, function () use ($verifyToken) {
+            return $this->service->verify($verifyToken);
         });
 
         if (! $cert) {
             Log::warning('Certificate verification failed', [
-                'cert_number' => $certNumber,
+                'verify_token' => $verifyToken,
             ]);
             return response()->json([
                 'success' => false,
@@ -89,16 +93,14 @@ class CertificateController extends Controller
             ], 404);
         }
 
-        Log::info('Certificate verified publicly', ['cert_number' => $certNumber]);
+        Log::info('Certificate verified publicly', ['cert_number' => $cert->cert_number]);
 
         return response()->json([
             'valid'              => $cert->status === 'active',
             'cert_number'        => $cert->cert_number,
-            'owner_name'         => $cert->owner_name,
             'units'              => $cert->units,
             'property_title'     => $cert->property_title,
             'property_location'  => $cert->property_location,
-            'total_invested'     => $cert->total_invested,
             'issued_at'          => $cert->issued_at,
             'last_updated_at'    => $cert->last_updated_at ?? null,
             'status'             => $cert->status,

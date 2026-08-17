@@ -50,6 +50,7 @@ class CertificateService
             'land_id'            => $land->id,
             'purchase_id'        => $purchase->id,
             'cert_number'        => $certNumber,
+            'verify_token'       => $this->generateVerifyToken(),
             'sequence_number'    => $seq,
             'digital_signature'  => $this->generateSignature(
                 $certNumber,
@@ -75,9 +76,19 @@ class CertificateService
         return $certificate->fresh();
     }
 
-    public function verify(string $certNumber): ?Certificate
+    /**
+     * Looks up a certificate by its public verify_token — a random value
+     * distinct from cert_number. cert_number is sequential
+     * (CERT-{year}-{land}-{seq}) and was previously used directly as the
+     * public lookup key, which let anyone enumerate every issued
+     * certificate (and the owner name / investment amount that came back
+     * with it) just by incrementing the sequence. verify_token has no
+     * predictable relationship to any other field, so it can't be guessed
+     * or iterated the same way.
+     */
+    public function verify(string $verifyToken): ?Certificate
     {
-        $cert = Certificate::where('cert_number', $certNumber)->first();
+        $cert = Certificate::where('verify_token', $verifyToken)->first();
 
         if (! $cert) return null;
 
@@ -185,6 +196,22 @@ class CertificateService
         });
     }
 
+    /**
+     * Random, unguessable token for the public verify endpoint. Kept
+     * separate from cert_number (sequential/display-only) and from
+     * digital_signature (bound to cert content, used for tamper-detection
+     * rather than as a lookup key) so this ID's only job is to not be
+     * predictable.
+     */
+    private function generateVerifyToken(): string
+    {
+        do {
+            $token = Str::random(32);
+        } while (Certificate::where('verify_token', $token)->exists());
+
+        return $token;
+    }
+
     private function generateSignature(string $certNumber, string $reference, string $owner): string
     {
         $raw = "{$certNumber}|{$reference}|{$owner}";
@@ -222,6 +249,7 @@ class CertificateService
         $owner          = htmlspecialchars($c->owner_name,            ENT_QUOTES, 'UTF-8');
         $ownerUpper     = htmlspecialchars(strtoupper($c->owner_name),ENT_QUOTES, 'UTF-8');
         $certNumber     = htmlspecialchars($c->cert_number,           ENT_QUOTES, 'UTF-8');
+        $verifyToken    = htmlspecialchars($c->verify_token,          ENT_QUOTES, 'UTF-8');
         $purchaseRef    = htmlspecialchars($c->purchase_reference,    ENT_QUOTES, 'UTF-8');
         $signature      = htmlspecialchars($c->digital_signature,     ENT_QUOTES, 'UTF-8');
         $verifyUrl      = htmlspecialchars(config('app.frontend_url') . '/verify', ENT_QUOTES, 'UTF-8');
@@ -470,10 +498,10 @@ body {
     <tr style="height:112pt;">
       <td colspan="2" style="height:112pt; text-align:center; padding:14pt 18pt 12pt; border-top:0.75pt solid #d4aa60; vertical-align:middle; overflow:hidden;">
         <div class="vfy-hdr">TO VERIFY THIS CERTIFICATE</div>
-        <div class="vfy-sub">Visit the address below and enter the certificate number exactly as printed.</div>
+        <div class="vfy-sub">Visit the address below and enter the verification code exactly as printed.</div>
         <table style="border-collapse:collapse; margin:0 auto; border:0.75pt solid #B8862A; background-color:#fdf8ef;">
           <tr><td style="padding:6pt 18pt; text-align:center;">
-            <div class="vfy-num">{$certNumber}</div>
+            <div class="vfy-num">{$verifyToken}</div>
             <span class="vfy-url">{$verifyUrl}</span>
           </td></tr>
         </table>

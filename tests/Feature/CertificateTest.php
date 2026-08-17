@@ -71,6 +71,7 @@ function cert_make_active(int $userId, int $landId, int $purchaseId): Certificat
         'land_id'            => $landId,
         'purchase_id'        => $purchaseId,
         'cert_number'        => $certNumber,
+        'verify_token'       => Str::random(32),
         'digital_signature'  => $signature,
         'sequence_number'    => DB::table('certificates')->count() + 1,
         'owner_name'         => $ownerName,
@@ -166,13 +167,13 @@ describe('Certificate listing', function () {
 
 describe('Public certificate verification', function () {
 
-    it('verifies an active certificate by cert_number (public endpoint)', function () {
+    it('verifies an active certificate by verify_token (public endpoint)', function () {
         $user     = cert_make_user();
         $landId   = cert_make_land();
         $purchase = cert_make_purchase($user->id, $landId);
         $cert     = cert_make_active($user->id, $landId, $purchase->id);
 
-        $this->getJson("/api/verify/{$cert->cert_number}")
+        $this->getJson("/api/verify/{$cert->verify_token}")
             ->assertStatus(200)
             ->assertJsonPath('valid', true)
             ->assertJsonPath('cert_number', $cert->cert_number)
@@ -180,12 +181,23 @@ describe('Public certificate verification', function () {
             ->assertJsonStructure([
                 'valid',
                 'cert_number',
-                'owner_name',
                 'property_title',
                 'units',
                 'issued_at',
                 'status',
             ]);
+    });
+
+    it('does not verify a certificate by its (guessable, sequential) cert_number', function () {
+        $user     = cert_make_user();
+        $landId   = cert_make_land();
+        $purchase = cert_make_purchase($user->id, $landId);
+        $cert     = cert_make_active($user->id, $landId, $purchase->id);
+
+        // cert_number is sequential/predictable and must NOT work as a
+        // lookup key for the public endpoint — only verify_token should.
+        $this->getJson("/api/verify/{$cert->cert_number}")
+            ->assertStatus(404);
     });
 
     it('returns valid: false for a revoked certificate', function () {
@@ -196,29 +208,32 @@ describe('Public certificate verification', function () {
 
         $cert->update(['status' => 'revoked', 'revoked_at' => now()]);
 
-        $this->getJson("/api/verify/{$cert->cert_number}")
+        $this->getJson("/api/verify/{$cert->verify_token}")
             ->assertStatus(200)
             ->assertJsonPath('valid', false)
             ->assertJsonPath('status', 'revoked');
     });
 
-    it('returns 404 for a cert_number that does not exist', function () {
-        $this->getJson('/api/verify/CERT-DOESNOTEXIST')
+    it('returns 404 for a verify_token that does not exist', function () {
+        $this->getJson('/api/verify/DOES-NOT-EXIST-TOKEN')
             ->assertStatus(404);
     });
 
-    it('does not expose sensitive owner data in the public verification response', function () {
+    it('does not expose sensitive owner or financial data in the public verification response', function () {
         $user     = cert_make_user();
         $landId   = cert_make_land();
         $purchase = cert_make_purchase($user->id, $landId);
         $cert     = cert_make_active($user->id, $landId, $purchase->id);
 
-        $response = $this->getJson("/api/verify/{$cert->cert_number}");
+        $response = $this->getJson("/api/verify/{$cert->verify_token}");
         $response->assertStatus(200);
 
         $data = $response->json();
         expect(array_key_exists('digital_signature', $data))->toBeFalse();
         expect(array_key_exists('user_id', $data))->toBeFalse();
+        expect(array_key_exists('owner_name', $data))->toBeFalse();
+        expect(array_key_exists('total_invested', $data))->toBeFalse();
+        expect(array_key_exists('verify_token', $data))->toBeFalse();
     });
 });
 
@@ -310,7 +325,7 @@ describe('Admin certificate management', function () {
         $this->actingAs($admin, 'sanctum')
             ->patchJson("/api/admin/certificates/{$cert->id}/revoke");
 
-        $this->getJson("/api/verify/{$cert->cert_number}")
+        $this->getJson("/api/verify/{$cert->verify_token}")
             ->assertStatus(200)
             ->assertJsonPath('valid', false);
     });

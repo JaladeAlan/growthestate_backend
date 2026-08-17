@@ -113,7 +113,7 @@ Route::prefix('blog')->group(function () {
 Route::post('/waitlist',       [WaitlistController::class, 'store'])->middleware('throttle:5,10');
 Route::post('/waitlist/check', [WaitlistController::class, 'check'])->middleware('throttle:10,1');
 
-Route::get('/verify/{certNumber}', [CertificateController::class, 'verify'])
+Route::get('/verify/{verifyToken}', [CertificateController::class, 'verify'])
     ->middleware('throttle:30,1');
 
 // ── Payment webhooks & OPay redirects ─────────────────────────────────────
