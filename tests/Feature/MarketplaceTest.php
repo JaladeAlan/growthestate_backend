@@ -198,6 +198,59 @@ describe('Marketplace offer submission', function () {
             ])
             ->assertStatus(422);
     });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // screening.transact/suspended middleware only checks $request->user()
+    // — whoever is making the HTTP call. On makeOffer that's the buyer, so
+    // this closes the gap at the earliest possible point (offer creation)
+    // rather than only failing later at accept time.
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('blocks a screening-blocked buyer from making an offer', function () {
+        $seller = marketplaceUser();
+        $buyer  = marketplaceUser(['screening_status' => 'blocked']);
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $this->actingAs($buyer, 'api')
+            ->postJson("/api/marketplace/{$listing->id}/offers", [
+                'units'            => 2,
+                'offer_price_kobo' => 500_000,
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'SCREENING_BLOCKED');
+    });
+
+    it('blocks a suspended buyer from making an offer', function () {
+        $seller = marketplaceUser();
+        $buyer  = marketplaceUser(['is_suspended' => true]);
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $this->actingAs($buyer, 'api')
+            ->postJson("/api/marketplace/{$listing->id}/offers", [
+                'units'            => 2,
+                'offer_price_kobo' => 500_000,
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ACCOUNT_SUSPENDED');
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +337,97 @@ describe('Accept offer trade execution', function () {
         $this->assertDatabaseHas('marketplace_listings', [
             'id'             => $listing->id,
             'units_for_sale' => 5,
+        ]);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // The screening.transact/suspended route middleware only checks
+    // $request->user() — on accept that's the SELLER, never the buyer. A
+    // buyer's status could also change between placing the offer and the
+    // seller accepting it, so the only fully safe place to check is inside
+    // the trade service itself, at the point money actually moves.
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('blocks the trade if the buyer became screening-blocked after placing the offer', function () {
+        $seller = marketplaceUser(['balance_kobo' => 0]);
+        $buyer  = marketplaceUser(['balance_kobo' => 10_000_000]);
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $offer = MarketplaceOffer::create([
+            'listing_id'       => $listing->id,
+            'buyer_id'         => $buyer->id,
+            'units'            => 5,
+            'offer_price_kobo' => 500_000,
+            'status'           => 'pending',
+        ]);
+
+        // Buyer gets blocked by compliance after the offer was placed but
+        // before the seller acts on it.
+        $buyer->update(['screening_status' => 'blocked']);
+
+        $this->actingAs($seller, 'api')
+            ->patchJson("/api/marketplace/{$listing->id}/offers/{$offer->id}/accept", [
+                'transaction_pin' => '1234',
+            ])
+            ->assertStatus(422);
+
+        // Nothing moved — offer still pending, no funds transferred.
+        $this->assertDatabaseHas('marketplace_offers', [
+            'id'     => $offer->id,
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseHas('users', [
+            'id'           => $buyer->id,
+            'balance_kobo' => 10_000_000,
+        ]);
+    });
+
+    it('blocks the trade if the buyer became suspended after placing the offer', function () {
+        $seller = marketplaceUser(['balance_kobo' => 0]);
+        $buyer  = marketplaceUser(['balance_kobo' => 10_000_000]);
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $offer = MarketplaceOffer::create([
+            'listing_id'       => $listing->id,
+            'buyer_id'         => $buyer->id,
+            'units'            => 5,
+            'offer_price_kobo' => 500_000,
+            'status'           => 'pending',
+        ]);
+
+        $buyer->update(['is_suspended' => true]);
+
+        $this->actingAs($seller, 'api')
+            ->patchJson("/api/marketplace/{$listing->id}/offers/{$offer->id}/accept", [
+                'transaction_pin' => '1234',
+            ])
+            ->assertStatus(422);
+
+        $this->assertDatabaseHas('marketplace_offers', [
+            'id'     => $offer->id,
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseHas('users', [
+            'id'           => $buyer->id,
+            'balance_kobo' => 10_000_000,
         ]);
     });
 
@@ -478,6 +622,111 @@ describe('Offer withdrawal and rejection', function () {
         $this->assertDatabaseHas('marketplace_offers', [
             'id'     => $offer->id,
             'status' => 'rejected',
+        ]);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat — sendMessage() previously trusted receiver_id from the seller without
+// checking it belongs to an actual buyer of the listing, unlike the GET
+// messages() endpoint which already enforced that.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Marketplace chat', function () {
+
+    it('buyer can message the seller without supplying receiver_id', function () {
+        $seller = marketplaceUser();
+        $buyer  = marketplaceUser();
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        MarketplaceOffer::create([
+            'listing_id'       => $listing->id,
+            'buyer_id'         => $buyer->id,
+            'units'            => 2,
+            'offer_price_kobo' => 500_000,
+            'status'           => 'pending',
+        ]);
+
+        $this->actingAs($buyer, 'api')
+            ->postJson("/api/marketplace/{$listing->id}/messages", ['body' => 'Is this still available?'])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('marketplace_messages', [
+            'listing_id'  => $listing->id,
+            'sender_id'   => $buyer->id,
+            'receiver_id' => $seller->id,
+        ]);
+    });
+
+    it('seller can message an actual buyer of the listing', function () {
+        $seller = marketplaceUser();
+        $buyer  = marketplaceUser();
+        $landId = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        MarketplaceOffer::create([
+            'listing_id'       => $listing->id,
+            'buyer_id'         => $buyer->id,
+            'units'            => 2,
+            'offer_price_kobo' => 500_000,
+            'status'           => 'pending',
+        ]);
+
+        $this->actingAs($seller, 'api')
+            ->postJson("/api/marketplace/{$listing->id}/messages", [
+                'body'        => 'Yes, still available.',
+                'receiver_id' => $buyer->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('marketplace_messages', [
+            'listing_id'  => $listing->id,
+            'sender_id'   => $seller->id,
+            'receiver_id' => $buyer->id,
+        ]);
+    });
+
+    it('rejects a seller message to a receiver_id who has never made an offer on the listing', function () {
+        $seller  = marketplaceUser();
+        $bystander = marketplaceUser(); // has no offer on this listing at all
+        $landId  = marketplaceLandId();
+        giveUnits($seller->id, $landId, 10);
+
+        $listing = MarketplaceListing::create([
+            'seller_id'         => $seller->id,
+            'land_id'           => $landId,
+            'units_for_sale'    => 10,
+            'asking_price_kobo' => 500_000,
+            'status'            => 'active',
+        ]);
+
+        $this->actingAs($seller, 'api')
+            ->postJson("/api/marketplace/{$listing->id}/messages", [
+                'body'        => 'Hey, unrelated pitch.',
+                'receiver_id' => $bystander->id,
+            ])
+            ->assertStatus(403);
+
+        $this->assertDatabaseMissing('marketplace_messages', [
+            'listing_id'  => $listing->id,
+            'receiver_id' => $bystander->id,
         ]);
     });
 });

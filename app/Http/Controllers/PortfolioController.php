@@ -57,9 +57,12 @@ class PortfolioController extends Controller
         $invested       = $oldest->total_invested_kobo;
         $current        = $latest->total_portfolio_value_kobo;
 
-        $annualizedReturn = ($invested > 0 && $current > 0)
-            ? (pow($current / $invested, 365 / $daysSinceFirst) - 1) * 100
-            : 0;
+        $annualizedReturn = null;
+
+        if ($invested > 0 && $current > 0 && $daysSinceFirst >= 7) {
+            $raw = (pow($current / $invested, 365 / $daysSinceFirst) - 1) * 100;
+            $annualizedReturn = is_finite($raw) ? round($raw, 2) : null;
+        }
 
         return response()->json([
             'success' => true,
@@ -70,7 +73,7 @@ class PortfolioController extends Controller
                 'current_value_kobo'      => $current,
                 'total_profit_loss_kobo'  => $latest->profit_loss_kobo,
                 'total_roi_percent'       => $latest->profit_loss_percent,
-                'annualized_return_pct'   => round($annualizedReturn, 2),
+                'annualized_return_pct'   => $annualizedReturn,
             ],
         ]);
     }

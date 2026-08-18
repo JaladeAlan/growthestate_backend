@@ -122,6 +122,8 @@ class PurchaseController extends Controller
         try {
             DB::transaction(function () use ($request, $landId, $user, $useRewards, &$eventPayload, &$isFirstPurchase, &$responseData) {
 
+                $user = \App\Models\User::where('id', $user->id)->lockForUpdate()->firstOrFail();
+
                 $land = Land::with('latestPrice')->lockForUpdate()->findOrFail($landId);
 
                 if (! $land->is_available || $land->available_units < $request->units) {
@@ -514,9 +516,9 @@ class PurchaseController extends Controller
         $maxDiscountKobo = (int) config('rewards.max_discount_kobo', 500000);
 
         $applyCap = function (int $rawKobo) use ($maxDiscountKobo): array {
-            // if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
-            //     return [$maxDiscountKobo, true];
-            // }
+            if ($maxDiscountKobo > 0 && $rawKobo > $maxDiscountKobo) {
+                return [$maxDiscountKobo, true];
+            }
             return [$rawKobo, false];
         };
 

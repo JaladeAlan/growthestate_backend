@@ -190,6 +190,25 @@ describe('ScreenUserJob', function () {
             ->assertStatus(403)
             ->assertJsonPath('code', 'SCREENING_BLOCKED');
     });
+
+    it('tags an auto-blocked user as suspended_by_compliance, not just is_suspended', function () {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'name'              => 'Viktor Bout',
+            'screening_status'  => 'pending',
+        ]);
+
+        seedSanctionsEntry('Viktor Bout');
+
+        ScreenUserJob::dispatchSync($user, 'kyc');
+
+        $this->assertDatabaseHas('users', [
+            'id'                       => $user->id,
+            'screening_status'         => 'blocked',
+            'is_suspended'             => true,
+            'suspended_by_compliance'  => true,
+        ]);
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -333,6 +352,80 @@ describe('Admin compliance endpoints', function () {
                 'blocked_users',
                 'clear_users',
             ]]);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // is_suspended has two independent writers — the generic admin
+    // suspend/unsuspend endpoints, and the compliance flow (block()/
+    // auto-escalate). suspended_by_compliance tracks which one is
+    // responsible, so clear() can safely reverse only the suspension it
+    // caused.
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('clearing a compliance-blocked user also lifts the suspension', function () {
+        $admin = complianceAdmin();
+
+        $user = User::factory()->create([
+            'email_verified_at'        => now(),
+            'screening_status'         => 'blocked',
+            'is_suspended'             => true,
+            'suspended_by_compliance'  => true,
+        ]);
+
+        $screening = UserScreening::create([
+            'user_id' => $user->id,
+            'status'  => 'blocked',
+            'trigger' => 'kyc',
+            'matches' => [['full_name' => 'Similar Name']],
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->postJson("/api/admin/compliance/screenings/{$screening->id}/clear", [
+                'notes' => 'Confirmed false positive after manual document review.',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('users', [
+            'id'                       => $user->id,
+            'screening_status'         => 'clear',
+            'is_suspended'             => false,
+            'suspended_by_compliance'  => false,
+        ]);
+    });
+
+    it('clearing a user suspended for an unrelated reason does not reactivate them', function () {
+        $admin = complianceAdmin();
+
+        // Suspended via the generic admin flow (fraud, ToS violation, etc.)
+        // — not by compliance — but happens to also have a flagged screening.
+        $user = User::factory()->create([
+            'email_verified_at'        => now(),
+            'screening_status'         => 'flagged',
+            'is_suspended'             => true,
+            'suspended_by_compliance'  => false,
+        ]);
+
+        $screening = UserScreening::create([
+            'user_id' => $user->id,
+            'status'  => 'flagged',
+            'trigger' => 'kyc',
+            'matches' => [],
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->postJson("/api/admin/compliance/screenings/{$screening->id}/clear", [
+                'notes' => 'False positive — name coincidence only.',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('users', [
+            'id'                => $user->id,
+            'screening_status'  => 'clear',
+            // Suspension is untouched — it wasn't compliance's to lift.
+            'is_suspended'      => true,
+        ]);
     });
 });
 

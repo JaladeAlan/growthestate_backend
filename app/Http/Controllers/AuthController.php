@@ -536,11 +536,8 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (! $user) {
-            return $this->sendErrorResponse('User not found', 404);
-        }
-
         if (
+            ! $user ||
             ! $user->verification_code ||
             ! $user->verification_code_expiry ||
             now()->isAfter($user->verification_code_expiry) ||

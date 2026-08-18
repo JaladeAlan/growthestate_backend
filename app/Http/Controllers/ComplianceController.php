@@ -67,7 +67,20 @@ class ComplianceController extends Controller
                 'notes'       => $request->notes,
             ]);
 
-            $screening->user->update(['screening_status' => 'clear']);
+            $updates = ['screening_status' => 'clear'];
+
+            // Only reverse the suspension if compliance caused it. A user
+            // could also be suspended independently via AdminUserController
+            // (fraud, ToS violation, etc.) — suspended_by_compliance is what
+            // lets us tell the two apart so clearing a false-positive match
+            // doesn't silently reactivate an account suspended for an
+            // unrelated reason.
+            if ($screening->user->suspended_by_compliance) {
+                $updates['is_suspended']            = false;
+                $updates['suspended_by_compliance']  = false;
+            }
+
+            $screening->user->update($updates);
 
             \App\Models\AdminActionLog::record($request->user(), 'compliance.clear', 'UserScreening', $screening->id, ['user_id' => $screening->user_id, 'notes' => $request->notes], $request->ip());
         });
@@ -99,8 +112,9 @@ class ComplianceController extends Controller
             ]);
 
             $screening->user->update([
-                'screening_status' => 'blocked',
-                'is_suspended'     => true,
+                'screening_status'         => 'blocked',
+                'is_suspended'             => true,
+                'suspended_by_compliance'  => true,
             ]);
 
             \App\Models\AdminActionLog::record($request->user(), 'compliance.block', 'UserScreening', $screening->id, ['user_id' => $screening->user_id, 'notes' => $request->notes], $request->ip());

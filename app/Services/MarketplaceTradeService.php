@@ -76,6 +76,9 @@ class MarketplaceTradeService
             $buyer  = $users[$buyerId];
             $seller = $users[$sellerId];
 
+            $this->assertPartyCanTransact($buyer, 'buyer');
+            $this->assertPartyCanTransact($seller, 'seller');
+
             // ── 2. Derive amounts ─────────────────────────────────────────
             $totalKobo  = $offer->offer_price_kobo * $offer->units;
             $feeKobo    = (int) round($totalKobo * self::FEE_PCT / 100);
@@ -263,5 +266,29 @@ class MarketplaceTradeService
                 'seller'               => $seller->only('id', 'name'),
             ];
         });
+    }
+
+    /**
+     * Mirrors CheckScreeningClear + EnsureUserIsNotSuspended's rules, but
+     * applied to whichever party ($role) this is — not just the requester.
+     */
+    private function assertPartyCanTransact(\App\Models\User $user, string $role): void
+    {
+        if (in_array($user->screening_status, ['blocked', 'flagged', 'pending'])) {
+            throw ValidationException::withMessages([
+                $role => match ($user->screening_status) {
+                    'blocked' => ucfirst($role) . "'s account has been restricted.",
+                    'flagged' => ucfirst($role) . "'s account is under review. Transactions are temporarily paused.",
+                    'pending' => ucfirst($role) . "'s account verification is pending.",
+                    default   => "Unable to process transaction for the {$role}.",
+                },
+            ]);
+        }
+
+        if ($user->is_suspended) {
+            throw ValidationException::withMessages([
+                $role => ucfirst($role) . "'s account has been suspended.",
+            ]);
+        }
     }
 }

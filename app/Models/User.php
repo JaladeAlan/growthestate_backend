@@ -21,6 +21,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         'password',
         'is_admin',
         'is_suspended',
+        'suspended_by_compliance',
         'email_verified_at',
         'transaction_pin',
         'pin_reset_code',
@@ -68,6 +69,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         'referred_by'                    => 'integer',
         'is_admin'                       => 'boolean',
         'is_suspended'                   => 'boolean',
+        'suspended_by_compliance'        => 'boolean',
         'bank_verified'                  => 'boolean',
     ];
 

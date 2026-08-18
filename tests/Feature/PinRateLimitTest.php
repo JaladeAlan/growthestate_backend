@@ -79,18 +79,74 @@ it('blocks the 4th /pin/verify-code attempt within 15 minutes with a 429', funct
     $user = pinTestUser();
 
     $user->update([
-        'pin_reset_code'       => Hash::make('999999'),
+        'pin_reset_code'       => Hash::make('99999999'),
         'pin_reset_expires_at' => now()->addMinutes(30),
     ]);
 
     for ($i = 0; $i < 3; $i++) {
         $this->actingAs($user, 'api')
-            ->postJson('/api/pin/verify-code', ['code' => '000000']); // wrong code, but still consumes an attempt
+            ->postJson('/api/pin/verify-code', ['code' => '00000000']); // wrong code, but still consumes an attempt
     }
 
     $response = $this->actingAs($user, 'api')
-        ->postJson('/api/pin/verify-code', ['code' => '000000']);
+        ->postJson('/api/pin/verify-code', ['code' => '00000000']);
 
     $response->assertStatus(429)
         ->assertJsonPath('success', false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /pin/update against a user who never called /pin/set. Hash::check() returns
+// false (not an exception) against a null hashed value, so without an
+// explicit guard this fell through to the generic "Current PIN is incorrect"
+// path — misleading, and it burned one of the 5 rate-limited attempts for a
+// PIN that never existed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+it('rejects /pin/update with a clear message when no PIN has been set yet', function () {
+    $user = User::factory()->create([
+        'email_verified_at' => now(),
+        'transaction_pin'   => null,
+    ]);
+
+    $response = $this->actingAs($user, 'api')->postJson('/api/pin/update', [
+        'current_pin'      => '1234',
+        'new_pin'          => '5678',
+        'pin_confirmation' => '5678',
+    ]);
+
+    $response->assertStatus(422)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'No PIN is set yet. Use /pin/set to create one.');
+});
+
+it('rejects /pin/forgot with a clear message when no PIN has been set yet, without sending mail or consuming the rate limit', function () {
+    Mail::fake();
+
+    $user = User::factory()->create([
+        'email_verified_at' => now(),
+        'transaction_pin'   => null,
+    ]);
+
+    $response = $this->actingAs($user, 'api')->postJson('/api/pin/forgot');
+
+    $response->assertStatus(422)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'No PIN is set yet. Use /pin/set to create one.');
+
+    Mail::assertNothingQueued();
+
+    // Guard fires before the rate limiter, so the 3/15-min forgot budget
+    // is still fully available afterwards.
+    for ($i = 0; $i < 3; $i++) {
+        $this->actingAs($user, 'api')->postJson('/api/pin/forgot')
+            ->assertStatus(422); // still no PIN — same guard, not a rate limit
+    }
+
+    $user->update(['transaction_pin' => Hash::make('1234')]);
+
+    $this->actingAs($user, 'api')
+        ->postJson('/api/pin/forgot')
+        ->assertStatus(200)
+        ->assertJsonPath('success', true);
 });

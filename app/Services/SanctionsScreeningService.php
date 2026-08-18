@@ -268,7 +268,7 @@ class SanctionsScreeningService
         );
 
         if ($screening->status === 'blocked') {
-            $user->update(['is_suspended' => true]);
+            $user->update(['is_suspended' => true, 'suspended_by_compliance' => true]);
 
             // Notify user their account has been suspended
             $user->notify(new \App\Notifications\AccountSuspendedNotification());

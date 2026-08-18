@@ -2646,8 +2646,8 @@ paths:
               properties:
                 code:
                   type: string
-                  minLength: 6
-                  maxLength: 6
+                  minLength: 8
+                  maxLength: 8
       responses:
         "200":
           description: Code verified

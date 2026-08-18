@@ -97,6 +97,13 @@ class PinController extends Controller
 
         $user = $request->user();
 
+        if (! $user->transaction_pin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No PIN is set yet. Use /pin/set to create one.',
+            ], 422);
+        }
+
         // Rate limit: 5 wrong attempts per 15 minutes per user
         $key = 'pin:update:' . $user->id;
 
@@ -132,13 +139,24 @@ class PinController extends Controller
 
     public function forgot(Request $request)
     {
+        $user = $request->user();
+
+        if (! $user->transaction_pin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No PIN is set yet. Use /pin/set to create one.',
+            ], 422);
+        }
+
         // Rate-limit the entire forgot flow (3 per 15 min per user+IP)
         if ($limited = $this->checkPinFlowLimit($request, 'forgot')) {
             return $limited;
         }
 
-        $user      = $request->user();
-        $code      = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        // 8 digits (~100x the search space of 6) — cheap insurance against
+        // offline brute-force if pin_reset_code were ever exposed via a DB
+        // leak; bcrypt slows each guess but the space itself was thin.
+        $code      = str_pad(random_int(0, 99999999), 8, '0', STR_PAD_LEFT);
         $expiresAt = now()->addMinutes(30);
 
         $user->update([
@@ -149,7 +167,7 @@ class PinController extends Controller
         MailService::queue(new \App\Mail\TransactionPinResetMail($user, $code), $user->email);
         return response()->json([
             'success' => true,
-            'message' => 'A 6-digit reset code has been sent to your email.',
+            'message' => 'An 8-digit reset code has been sent to your email.',
         ]);
     }
 
@@ -159,7 +177,7 @@ class PinController extends Controller
 
     public function verifyCode(Request $request)
     {
-        $request->validate(['code' => 'required|digits:6']);
+        $request->validate(['code' => 'required|digits:8']);
 
         if ($limited = $this->checkPinFlowLimit($request, 'verify')) {
             return $limited;

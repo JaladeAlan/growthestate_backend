@@ -187,6 +187,74 @@ describe('Land purchase', function () {
 
         $response->assertStatus(403);
     });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // calculateDiscount()'s cap-enforcement branch was commented out, so a
+    // percentage discount (referral or first-purchase) applied against an
+    // unbounded total_cost (large units × price) produced an unbounded
+    // absolute discount — config('rewards.max_discount_kobo') existed but
+    // was never actually enforced.
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('caps a referral discount at max_discount_kobo instead of applying it uncapped', function () {
+        Notification::fake();
+        config(['rewards.max_discount_kobo' => 500_000]); // ₦5,000 cap
+        config(['rewards.referral_discount_percent' => 10]);
+
+        $user   = makeVerifiedUser(['balance_kobo' => 100_000_000]); // ₦1,000,000
+        $landId = makeLand(['available_units' => 10_000]);
+        seedPrice($landId, 100_000); // ₦1,000/unit
+
+        $referral = \App\Models\Referral::create([
+            'referrer_id'       => makeVerifiedUser()->id,
+            'referred_user_id'  => $user->id,
+            'status'            => 'completed',
+        ]);
+
+        \App\Models\ReferralReward::create([
+            'referral_id'         => $referral->id,
+            'user_id'             => $user->id,
+            'reward_type'         => 'discount',
+            'discount_percentage' => 10,
+            'claimed'             => false,
+        ]);
+
+        // 200 units × ₦1,000 = ₦200,000 total cost. 10% = ₦20,000 raw
+        // discount, which is well above the ₦5,000 cap.
+        $response = $this->actingAs($user, 'sanctum')
+            ->postJson("/api/lands/{$landId}/purchase", [
+                'units'           => 200,
+                'use_rewards'     => true,
+                'transaction_pin' => '1234',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('total_discount_kobo', 500_000);
+
+        expect($response->json('total_discount_kobo'))->toBeLessThan(2_000_000); // < uncapped 10%
+    });
+
+    it('does not cap a discount that already falls under max_discount_kobo', function () {
+        Notification::fake();
+        config(['rewards.max_discount_kobo' => 500_000]);
+        config(['rewards.first_purchase_discount_percent' => 5]);
+
+        $user   = makeVerifiedUser(['balance_kobo' => 10_000_000]);
+        $landId = makeLand(['available_units' => 100]);
+        seedPrice($landId, 100_000); // ₦1,000/unit
+
+        // 10 units × ₦1,000 = ₦10,000 total. 5% = ₦500 raw discount — well
+        // under the ₦5,000 cap, so it should pass through unmodified.
+        $response = $this->actingAs($user, 'sanctum')
+            ->postJson("/api/lands/{$landId}/purchase", [
+                'units'           => 10,
+                'use_rewards'     => true,
+                'transaction_pin' => '1234',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('total_discount_kobo', 500); // 5% of 10,000
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

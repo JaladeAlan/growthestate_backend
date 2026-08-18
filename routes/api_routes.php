@@ -235,7 +235,7 @@ Route::middleware(['jwt.custom'])->group(function () {
         Route::patch('/marketplace/{listing}',   [MarketplaceController::class, 'update']);
         Route::delete('/marketplace/{listing}',  [MarketplaceController::class, 'destroy']);
         Route::post('/marketplace/{listing}/offers', [MarketplaceController::class, 'makeOffer'])
-            ->middleware('throttle:10,60');
+            ->middleware(['throttle:10,60', 'screening.transact', 'suspended']);
         Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer'])
             ->middleware(['throttle:5,1', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
         Route::patch('/marketplace/{listing}/offers/{offer}/reject',   [MarketplaceController::class, 'rejectOffer']);

@@ -343,6 +343,18 @@ class MarketplaceController extends Controller
 
         if (! $receiverId) abort(422, 'receiver_id is required when seller sends a message.');
 
+        // Mirror the same check messages() (GET) uses: the seller can only
+        // message an actual buyer of this listing, not an arbitrary user ID.
+        if ($sender->id === $listing->seller_id) {
+            $isBuyer = MarketplaceOffer::where('listing_id', $listing->id)
+                ->where('buyer_id', $receiverId)
+                ->exists();
+
+            if (! $isBuyer) {
+                abort(403, 'Invalid conversation partner.');
+            }
+        }
+
         $message = MarketplaceMessage::create([
             'listing_id'  => $listing->id,
             'sender_id'   => $sender->id,

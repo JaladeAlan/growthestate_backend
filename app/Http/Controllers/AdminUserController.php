@@ -144,7 +144,7 @@ class AdminUserController extends Controller
             ]);
         }
 
-        $user->update(['is_suspended' => false]);
+        $user->update(['is_suspended' => false, 'suspended_by_compliance' => false]);
 
         Log::info('User unsuspended', [
             'target_user_id' => $user->id,

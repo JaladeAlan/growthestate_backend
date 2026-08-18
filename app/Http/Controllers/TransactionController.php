@@ -2,10 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Deposit;
-use App\Models\Transaction;
-use App\Models\Withdrawal;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Routes:
@@ -23,66 +22,98 @@ class TransactionController extends Controller
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
-        $userId = $user->id;
-
-        // ── Land transactions (purchases / sales) ─────────────────────────
-        $landTx = Transaction::with('land:id,title')
-            ->where('user_id', $userId)
-            ->select(['id', 'type', 'land_id', 'units', 'amount_kobo', 'transaction_date', 'status'])
-            ->get()
-            ->map(fn (Transaction $t) => [
-                'type'   => ucfirst($t->type),
-                'land'   => $t->land?->title,
-                'units'  => $t->units,
-                'amount' => ($t->amount_kobo ?? 0) / 100,       
-                'date'   => $t->transaction_date?->toISOString(), 
-                'status' => ucfirst($t->status ?? 'Completed'),
-            ]);
-
-        // ── Deposits ──────────────────────────────────────────────────────
-        $deposits = Deposit::where('user_id', $userId)
-            ->select(['id', 'amount_kobo', 'status', 'created_at'])
-            ->get()
-            ->map(fn (Deposit $d) => [
-                'type'   => 'Deposit',
-                'land'   => null,
-                'units'  => null,
-                'amount' => ($d->amount_kobo ?? 0) / 100,
-                'date'   => $d->created_at?->toISOString(),
-                'status' => ucfirst($d->status ?? 'pending'),
-            ]);
-
-        // ── Withdrawals ───────────────────────────────────────────────────
-        $withdrawals = Withdrawal::where('user_id', $userId)
-            ->select(['id', 'amount_kobo', 'status', 'created_at'])
-            ->get()
-            ->map(fn (Withdrawal $w) => [
-                'type'   => 'Withdrawal',
-                'land'   => null,
-                'units'  => null,
-                'amount' => ($w->amount_kobo ?? 0) / 100,
-                'date'   => $w->created_at?->toISOString(),
-                'status' => ucfirst($w->status ?? 'pending'),
-            ]);
-
-        // ── Merge & sort ──────────────────────────────────────────────────
+        $userId  = $user->id;
         $page    = max(1, (int) $request->query('page', 1));
         $perPage = self::PER_PAGE;
 
-        $all = $landTx
-            ->concat($deposits)
-            ->concat($withdrawals)
-            ->sortByDesc('date')  
-            ->values()
-            ->forPage($page, $perPage);
+        // Paginated at the DB level via UNION ALL rather than fetching every
+        // land transaction, deposit, and withdrawal the user has ever made
+        // and paginating in PHP — the previous approach re-fetched and
+        // re-sorted the user's ENTIRE history on every single page request,
+        // including page 50, which only ever grows worse over the account's
+        // lifetime.
+        $total = DB::query()
+            ->fromSub($this->historyUnion($userId), 'combined')
+            ->count();
+
+        $rows = DB::query()
+            ->fromSub($this->historyUnion($userId), 'combined')
+            // Postgres defaults to NULLS FIRST on DESC order, which would
+            // float transactions with a null transaction_date to the very
+            // top as if they were the most recent. Force NULLS LAST to
+            // match the intended "most recent first" ordering.
+            ->orderByRaw('date DESC NULLS LAST')
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get();
+
+        $data = $rows->map(fn ($r) => [
+            'type'   => ucfirst($r->type),
+            'land'   => $r->land,
+            'units'  => $r->units,
+            'amount' => ($r->amount_kobo ?? 0) / 100,
+            'date'   => $r->date ? Carbon::parse($r->date)->toISOString() : null,
+            'status' => ucfirst($r->status),
+        ]);
 
         return response()->json([
-            'success'  => true,
-            'data'     => $all->values(),
-            'meta'     => [
-                'page'     => $page,
-                'per_page' => $perPage,
+            'success' => true,
+            'data'    => $data,
+            'meta'    => [
+                'page'       => $page,
+                'per_page'   => $perPage,
+                'total'      => $total,
+                'last_page'  => (int) max(1, ceil($total / $perPage)),
             ],
         ]);
+    }
+
+    /**
+     * Builds a fresh UNION ALL query builder combining land transactions,
+     * deposits, and withdrawals into one shape (id, type, land, units,
+     * amount_kobo, date, status). Returns a new builder instance each call
+     * — reusing the same builder object across the count() and the page
+     * get() risks stale/duplicated bindings on Laravel's query builder.
+     */
+    private function historyUnion(int $userId)
+    {
+        $transactions = DB::table('transactions as t')
+            ->leftJoin('lands as l', 'l.id', '=', 't.land_id')
+            ->where('t.user_id', $userId)
+            ->select([
+                't.id',
+                't.type',
+                'l.title as land',
+                't.units',
+                't.amount_kobo',
+                't.transaction_date as date',
+                DB::raw("COALESCE(t.status, 'completed') as status"),
+            ]);
+
+        $deposits = DB::table('deposits as d')
+            ->where('d.user_id', $userId)
+            ->select([
+                'd.id',
+                DB::raw("'deposit' as type"),
+                DB::raw('NULL as land'),
+                DB::raw('NULL as units'),
+                'd.amount_kobo',
+                'd.created_at as date',
+                DB::raw("COALESCE(d.status, 'pending') as status"),
+            ]);
+
+        $withdrawals = DB::table('withdrawals as w')
+            ->where('w.user_id', $userId)
+            ->select([
+                'w.id',
+                DB::raw("'withdrawal' as type"),
+                DB::raw('NULL as land'),
+                DB::raw('NULL as units'),
+                'w.amount_kobo',
+                'w.created_at as date',
+                DB::raw("COALESCE(w.status, 'pending') as status"),
+            ]);
+
+        return $transactions->unionAll($deposits)->unionAll($withdrawals);
     }
 }

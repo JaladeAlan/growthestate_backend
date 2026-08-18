@@ -183,7 +183,7 @@ All PIN routes require authentication + verified email.
 |--------|----------|-------------|
 | POST | `/pin/set` | Set PIN for the first time |
 | POST | `/pin/update` | Change existing PIN |
-| POST | `/pin/forgot` | Send 6-digit reset code to email |
+| POST | `/pin/forgot` | Send 8-digit reset code to email |
 | POST | `/pin/verify-code` | Verify code, receive `reset_token` |
 | POST | `/pin/reset` | Set new PIN using `reset_token` |
 
