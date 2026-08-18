@@ -202,8 +202,8 @@ class Land extends Model
         /** @var GeoService $geo */
         $geo = app(GeoService::class);
 
-        return $query->whereRaw(
-            $geo->makeBboxExpression($west, $south, $east, $north)
-        );
+        [$sql, $bindings] = $geo->makeBboxExpression($west, $south, $east, $north);
+
+        return $query->whereRaw($sql, $bindings);
     }
 }

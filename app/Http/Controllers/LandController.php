@@ -149,6 +149,8 @@ class LandController extends Controller
                 ...$this->extractDetailFields($request),
             ]);
 
+            $this->setGeometry($land, $wkt);
+
             LandPriceHistory::create([
                 'land_id'             => $land->id,
                 'price_per_unit_kobo' => $request->price_per_unit_kobo,
@@ -192,6 +194,8 @@ class LandController extends Controller
 
         $updates = $this->extractDetailFields($request, onlyFilled: true);
 
+        $resolvedWkt = null;
+
         if ($request->has('geometry')) {
             try {
                 $this->geo->validateGeojson($request->geometry);
@@ -199,19 +203,22 @@ class LandController extends Controller
                 throw ValidationException::withMessages(['geometry' => $e->getMessage()]);
             }
 
-            [$centerLat, $centerLng, $wkt] = $this->resolveGeometry($request->geometry);
+            [$centerLat, $centerLng, $resolvedWkt] = $this->resolveGeometry($request->geometry);
 
-            $updates['coordinates'] = DB::raw("ST_GeomFromText('{$wkt}', 4326)");
-            $updates['lat']         = $centerLat;
-            $updates['lng']         = $centerLng;
+            $updates['lat'] = $centerLat;
+            $updates['lng'] = $centerLng;
         }
 
         foreach (['title', 'location', 'size', 'total_units', 'description', 'is_available'] as $field) {
             if ($request->has($field)) $updates[$field] = $request->input($field);
         }
 
-        DB::transaction(function () use ($request, $land, $updates) {
+        DB::transaction(function () use ($request, $land, $updates, $resolvedWkt) {
             $land->update($updates);
+
+            if ($resolvedWkt !== null) {
+                $this->setGeometry($land, $resolvedWkt);
+            }
 
             if ($request->has('valuation_history')) {
                 $this->syncValuations($land, $request->input('valuation_history', []));
@@ -400,9 +407,23 @@ class LandController extends Controller
             'description'     => $request->description,
             'lat'             => $lat,
             'lng'             => $lng,
-            'coordinates'     => DB::raw("ST_GeomFromText('{$wkt}', 4326)"),
             'is_available'    => true,
         ];
+    }
+
+    /**
+     * Set a land parcel's PostGIS geometry column via a parameterised
+     * statement. Called after create()/update() rather than inline in the
+     * attribute array, because DB::raw() doesn't accept bindings when used
+     * as an Eloquent attribute value — the binding must be passed to the
+     * query directly.
+     */
+    private function setGeometry(Land $land, string $wkt): void
+    {
+        DB::update(
+            'UPDATE lands SET coordinates = ST_GeomFromText(?, 4326) WHERE id = ?',
+            [$wkt, $land->id]
+        );
     }
 
     private function extractDetailFields(Request $request, bool $onlyFilled = false): array

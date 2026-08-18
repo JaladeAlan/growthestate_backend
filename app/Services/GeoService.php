@@ -80,15 +80,13 @@ class GeoService
     }
 
     /**
-     * Build a PostGIS expression that matches geometries overlapping a
-     * bounding box. Used inside whereRaw() calls.
+     * Build a PostGIS bounding-box expression for use in whereRaw().
+     * Returns [$sql, $bindings] so the caller can pass both to whereRaw()
+     * rather than interpolating the coordinate values into the SQL string
+     * directly — a pattern that's safe today (all inputs are (float) cast)
+     * but would be fragile to any future change that relaxed that cast.
      *
-     * @param  float  $minLng  West
-     * @param  float  $minLat  South
-     * @param  float  $maxLng  East
-     * @param  float  $maxLat  North
-     * @param  int    $srid    Spatial reference ID (default 4326 = WGS-84)
-     * @return string          Raw SQL fragment safe for use in whereRaw()
+     * @return array{0: string, 1: array<float>}
      */
     public function makeBboxExpression(
         float $minLng,
@@ -96,8 +94,11 @@ class GeoService
         float $maxLng,
         float $maxLat,
         int   $srid = 4326
-    ): string {
-        return "ST_Intersects(coordinates, ST_MakeEnvelope({$minLng}, {$minLat}, {$maxLng}, {$maxLat}, {$srid}))";
+    ): array {
+        return [
+            'ST_Intersects(coordinates, ST_MakeEnvelope(?, ?, ?, ?, ?))',
+            [$minLng, $minLat, $maxLng, $maxLat, $srid],
+        ];
     }
 
     /**

@@ -23,7 +23,7 @@ class ReferralController extends Controller
         $user = $request->user();
 
         $referrals = Referral::where('referrer_id', $user->id)
-            ->with('referredUser:id,name,email,created_at')
+            ->with('referredUser:id,name,created_at')
             ->latest()
             ->get();
 
@@ -64,8 +64,7 @@ class ReferralController extends Controller
         return response()->json([
             'success' => true,
             'data'    => [
-                'code'          => $referrer->referral_code,
-                'referrer_name' => $referrer->name,
+                'code' => $referrer->referral_code,
             ],
         ]);
     }
