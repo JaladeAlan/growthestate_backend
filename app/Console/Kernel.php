@@ -14,5 +14,11 @@ class Kernel extends ConsoleKernel
             ->dailyAt('23:55')
             ->onOneServer()
             ->withoutOverlapping();
+
+        $schedule->command('wallets:reconcile')
+            ->hourly()
+            ->onOneServer()
+            ->withoutOverlapping()
+            ->runInBackground();
     }
 }
