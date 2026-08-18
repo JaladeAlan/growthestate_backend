@@ -138,7 +138,7 @@ class SupportController extends Controller
         }
 
         // ── 4. Response cache (avoid repeat AI calls for identical questions) ──
-        $cacheKey = 'ai:chat:' . md5($lastMessage);
+        $cacheKey = 'ai:chat:' . $user->id . ':' . md5($lastMessage);
 
         if (Cache::has($cacheKey)) {
             return response()->json([

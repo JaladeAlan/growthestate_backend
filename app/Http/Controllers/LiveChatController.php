@@ -142,15 +142,31 @@ class LiveChatController extends Controller
 
     public function agentClaim(Request $request, SupportTicket $ticket): JsonResponse
     {
-        if ($ticket->agent_id) {
+        $agent   = $request->user();
+        $claimed = false;
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($ticket, $agent, &$claimed) {
+            // Lock the row so two agents can't both read agent_id=null and
+            // both claim the same ticket before either write completes.
+            $locked = SupportTicket::lockForUpdate()->find($ticket->id);
+
+            if ($locked->agent_id) {
+                return; // already claimed inside the lock — authoritative check
+            }
+
+            $locked->update([
+                'agent_id'  => $agent->id,
+                'status'    => 'waiting',
+                'chat_mode' => 'live',
+            ]);
+
+            $ticket->agent_id = $agent->id; // reflect the update for response below
+            $claimed = true;
+        });
+
+        if (! $claimed) {
             return response()->json(['message' => 'This ticket is already claimed.'], 409);
         }
-
-        $ticket->update([
-            'agent_id'  => $request->user()->id,
-            'status'    => 'waiting',
-            'chat_mode' => 'live',
-        ]);
 
         $this->removeFromQueue($ticket->id);
 
@@ -159,8 +175,8 @@ class LiveChatController extends Controller
             ticketId: $ticket->id,
             status:   'agent_joined',
             payload:  [
-                'agent_name' => $request->user()->name,
-                'message'    => $request->user()->name . ' has joined the chat.',
+                'agent_name' => $agent->name,
+                'message'    => $agent->name . ' has joined the chat.',
             ]
         ))->toOthers();
 

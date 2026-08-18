@@ -57,8 +57,7 @@ class WaitlistController extends Controller
             }
 
             // ── Assign position ───────────────────────────────────────────
-            // Base position = current count + 1
-            $basePosition = Waitlist::count() + 1;
+            $basePosition = Waitlist::lockForUpdate()->count() + 1;
 
             // Referred users jump ahead by REFERRAL_BOOST spots
             $boost    = $referrer ? (int) config('waitlist.referral_boost', 3) : 0;
@@ -130,7 +129,6 @@ class WaitlistController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'name'            => $entry->name,
                 'position'        => $entry->position,
                 'referral_code'   => $entry->referral_code,
                 'referrals_count' => $referralsCount,
