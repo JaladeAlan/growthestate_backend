@@ -205,13 +205,19 @@ it('rejects an expired verification code', function () {
     expect($user->fresh()->hasVerifiedEmail())->toBeFalse();
 });
 
-it('rejects verification for a nonexistent email', function () {
+it('rejects verification for a nonexistent email without leaking that fact via status code', function () {
+    // Same 400/message as an existing user with a wrong code (see 'rejects
+    // an incorrect verification code' above) — a distinguishable 404 here
+    // would let an attacker enumerate registered emails one request at a
+    // time, which is exactly what the password-reset flow already guards
+    // against elsewhere in this file.
     $response = $this->postJson('/api/email/verify/code', [
         'email'             => 'nobody@example.com',
         'verification_code' => '123456',
     ]);
 
-    $response->assertStatus(404);
+    $response->assertStatus(400)
+        ->assertJsonPath('message', 'Invalid or expired verification code.');
 });
 
 it('resends a verification code for an unverified user', function () {
