@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Referral;
 use App\Models\ReferralReward;
 use App\Models\User;
+use App\Services\LedgerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -133,17 +134,22 @@ class ReferralController extends Controller
                         $user = User::lockForUpdate()->find($reward->user_id);
 
                         // Credit the REWARDS wallet, not the main wallet
-                        $user->creditRewards(
-                            $reward->amount_kobo,
-                            'REF-REWARD-' . $reward->id,
-                            'Referral cashback reward'
+                        $user->increment('rewards_balance_kobo', $reward->amount_kobo);
+                        $rewardsAfter = $user->fresh()->rewards_balance_kobo;
+
+                        LedgerService::postRewardCredit(
+                            user:                $user->fresh(),
+                            amountKobo:          (int) $reward->amount_kobo,
+                            reference:           'REF-REWARD-' . $reward->id,
+                            note:                'Referral cashback reward',
+                            rewardsBalanceAfter: $rewardsAfter,
                         );
 
                         Log::info('Referral cashback credited to rewards wallet', [
                             'user_id'              => $user->id,
                             'reward_id'            => $reward->id,
                             'amount_kobo'          => $reward->amount_kobo,
-                            'rewards_balance_kobo' => $user->fresh()->rewards_balance_kobo,
+                            'rewards_balance_kobo' => $rewardsAfter,
                         ]);
                     }
                     break;

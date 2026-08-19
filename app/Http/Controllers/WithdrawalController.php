@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\LedgerEntry;
 use App\Models\Withdrawal;
+use App\Services\LedgerService;
 use App\Notifications\WithdrawalConfirmed;
 use App\Notifications\WithdrawalFailedNotification;
 use App\Notifications\WithdrawalRejectedNotification;
@@ -45,7 +45,6 @@ class WithdrawalController extends Controller
 
         // Restore balance
         $user->increment('balance_kobo', $withdrawal->amount_kobo);
-        $balanceAfter = $user->fresh()->balance_kobo;
 
         $withdrawalDay = $withdrawal->created_at->toDateString();
         if ($user->withdrawal_day === $withdrawalDay) {
@@ -58,15 +57,12 @@ class WithdrawalController extends Controller
                 ]);
         }
 
-        // Immutable audit entry
-        LedgerEntry::create([
-            'uid'           => $user->id,
-            'type'          => 'withdrawal_reversal',
-            'amount_kobo'   => $withdrawal->amount_kobo,
-            'balance_after' => $balanceAfter,
-            'reference'     => $withdrawal->reference . '-REVERSAL',
-            'note'          => $reason,
-        ]);
+        LedgerService::postWithdrawalReversal(
+            user:       $user->fresh(),
+            amountKobo: (int) $withdrawal->amount_kobo,
+            reference:  $withdrawal->reference,
+            reason:     $reason,
+        );
 
         $withdrawal->update([
             'status'           => 'rejected',
@@ -143,15 +139,11 @@ class WithdrawalController extends Controller
                 $lockedUser->withdrawal_day               = $today;
                 $lockedUser->save();
 
-                $balanceAfter = $lockedUser->balance_kobo;
-
-                LedgerEntry::create([
-                    'uid'           => $lockedUser->id,
-                    'type'          => 'withdrawal',
-                    'amount_kobo'   => $request->amount,
-                    'balance_after' => $balanceAfter,
-                    'reference'     => $referenceCode,
-                ]);
+                LedgerService::postWithdrawal(
+                    user:       $lockedUser->fresh(),
+                    amountKobo: (int) $request->amount,
+                    reference:  $referenceCode,
+                );
 
                 // Status is 'pending' — waits for admin approval before Paystack is called
                 Withdrawal::create([
@@ -498,6 +490,11 @@ class WithdrawalController extends Controller
                     'status'       => 'completed',
                     'processed_at' => now(),
                 ]);
+
+                LedgerService::postWithdrawalCompleted(
+                    amountKobo: (int) $locked->amount_kobo,
+                    reference:  $locked->reference,
+                );
 
                 try {
                     $locked->user->notify(new WithdrawalConfirmed($locked));

@@ -2,13 +2,13 @@
 
 namespace App\Services;
 
-use App\Models\LedgerEntry;
 use App\Models\MarketplaceListing;
 use App\Models\MarketplaceOffer;
 use App\Models\MarketplaceTransaction;
 use App\Models\Purchase;
 use App\Models\Transaction;
 use App\Models\UserLand;
+use App\Services\LedgerService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -110,25 +110,19 @@ class MarketplaceTradeService
             $buyer->balance_kobo -= $totalKobo;
             $buyer->save();
 
-            LedgerEntry::create([
-                'uid'           => $buyer->id,
-                'type'          => 'marketplace_purchase',
-                'amount_kobo'   => $totalKobo,
-                'balance_after' => $buyer->balance_kobo,
-                'reference'     => $reference,
-            ]);
-
             // ── 6. Credit seller wallet (minus fee) ───────────────────────
             $seller->balance_kobo += $sellerGets;
             $seller->save();
 
-            LedgerEntry::create([
-                'uid'           => $seller->id,
-                'type'          => 'marketplace_sale',
-                'amount_kobo'   => $sellerGets,
-                'balance_after' => $seller->balance_kobo,
-                'reference'     => $reference,
-            ]);
+            // ── Ledger: single 3-line balanced transaction ─────────────────
+            // buyer:main debit + seller:main credit + platform:fees credit = 0
+            LedgerService::postMarketplaceTrade(
+                buyer:      $buyer->fresh(),
+                seller:     $seller->fresh(),
+                totalKobo:  $totalKobo,
+                feeKobo:    $feeKobo,
+                reference:  $reference,
+            );
 
             // ── 7. Transfer units: decrement seller ───────────────────────
             UserLand::where('user_id', $seller->id)

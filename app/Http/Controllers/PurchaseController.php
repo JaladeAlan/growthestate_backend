@@ -5,12 +5,12 @@ namespace App\Http\Controllers;
 use App\Events\LandUnitsPurchased;
 use App\Events\LandUnitsSold;
 use App\Models\Land;
-use App\Models\LedgerEntry;
 use App\Models\Purchase;
 use App\Models\Referral;
 use App\Models\ReferralReward;
 use App\Models\Transaction;
 use App\Models\UserLand;
+use App\Services\LedgerService;
 use App\Services\RewardsService;
 use App\Services\CertificateService;
 use Illuminate\Http\Request;
@@ -196,15 +196,13 @@ class PurchaseController extends Controller
 
                 if ($mainUsed > 0) {
                     $user->decrement('balance_kobo', $mainUsed);
-                    $balanceAfter = $user->fresh()->balance_kobo;
 
-                    LedgerEntry::create([
-                        'uid'           => $user->id,
-                        'type'          => 'purchase',
-                        'amount_kobo'   => $mainUsed,
-                        'balance_after' => $balanceAfter,
-                        'reference'     => $reference,
-                    ]);
+                    LedgerService::postPurchase(
+                        user:       $user->fresh(),
+                        amountKobo: $mainUsed,
+                        reference:  $reference,
+                        note:       "Purchase: {$land->title}",
+                    );
                 }
 
                 $land->decrement('available_units', $request->units);
@@ -408,15 +406,13 @@ class PurchaseController extends Controller
                 $land->save();
 
                 $user->increment('balance_kobo', $totalReceived);
-                $balanceAfter = $user->fresh()->balance_kobo;
 
-                LedgerEntry::create([
-                    'uid'           => $user->id,
-                    'type'          => 'sale',
-                    'amount_kobo'   => $totalReceived,
-                    'balance_after' => $balanceAfter,
-                    'reference'     => $reference,
-                ]);
+                LedgerService::postSale(
+                    user:       $user->fresh(),
+                    amountKobo: $totalReceived,
+                    reference:  $reference,
+                    note:       "Sale: {$land->title}",
+                );
 
                 UserLand::where('user_id', $user->id)
                     ->where('land_id', $land->id)
