@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Deposit;
-use App\Models\LedgerEntry;
 use App\Models\User;
+use App\Services\LedgerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -86,23 +86,14 @@ class PaystackWebhookController extends Controller
 
             // Credit main wallet
             $user->increment('balance_kobo', $deposit->amount_kobo);
-            $balanceAfter = $user->fresh()->balance_kobo;
 
-            LedgerEntry::create([
-                'uid'           => $user->id,
-                'type'          => 'deposit',
-                'amount_kobo'   => $deposit->amount_kobo,
-                'balance_after' => $balanceAfter,
-                'reference'     => $reference,
-            ]);
-
-            LedgerEntry::create([
-                'uid'           => $user->id,
-                'type'          => 'transaction_fee',
-                'amount_kobo'   => $deposit->transaction_fee,
-                'balance_after' => $user->fresh()->balance_kobo,
-                'reference'     => $deposit->reference,
-                ]);
+            LedgerService::postDeposit(
+                user:       $user->fresh(),
+                amountKobo: (int) $deposit->amount_kobo,
+                reference:  $reference,
+                feeKobo:    (int) $deposit->transaction_fee,
+                gateway:    'paystack',
+            );
 
             $deposit->update([
                 'status'       => 'completed',
@@ -113,7 +104,7 @@ class PaystackWebhookController extends Controller
                 'reference'    => $reference,
                 'user_id'      => $user->id,
                 'amount_kobo'  => $deposit->amount_kobo,
-                'balance_after' => $balanceAfter,
+                'balance_after' => $user->fresh()->balance_kobo,
             ]);
 
             $user->notify(new \App\Notifications\DepositConfirmed(

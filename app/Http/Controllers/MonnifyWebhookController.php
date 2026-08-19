@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Deposit;
 use App\Models\User;
+use App\Services\LedgerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -108,32 +109,18 @@ class MonnifyWebhookController extends Controller
             $user->balance_kobo += $lockedDeposit->amount_kobo;
             $user->save();
 
-            $balanceAfter = $user->balance_kobo;
-
             $lockedDeposit->update([
                 'status'       => 'completed',
                 'processed_at' => now(),
             ]);
 
-            // Ledger: deposit credit
-            DB::table('ledger_entries')->insert([
-                'uid'           => $user->id,
-                'type'          => 'deposit',
-                'amount_kobo'   => $lockedDeposit->amount_kobo,
-                'balance_after' => $balanceAfter,
-                'reference'     => $lockedDeposit->reference,
-                'created_at'    => now(),
-            ]);
-
-            // Ledger: fee audit record (gateway-collected, no balance change)
-            DB::table('ledger_entries')->insert([
-                'uid'           => $user->id,
-                'type'          => 'transaction_fee',
-                'amount_kobo'   => $lockedDeposit->transaction_fee,
-                'balance_after' => $balanceAfter,
-                'reference'     => $lockedDeposit->reference,
-                'created_at'    => now(),
-            ]);
+            LedgerService::postDeposit(
+                user:       $user->fresh(),
+                amountKobo: (int) $lockedDeposit->amount_kobo,
+                reference:  $lockedDeposit->reference,
+                feeKobo:    (int) $lockedDeposit->transaction_fee,
+                gateway:    'monnify',
+            );
 
             try {
                 $user->notify(new \App\Notifications\DepositConfirmed(

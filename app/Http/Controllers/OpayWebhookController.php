@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Deposit;
-use App\Models\LedgerEntry;
 use App\Models\User;
+use App\Services\LedgerService;
 use App\Services\Payments\OpayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -154,26 +154,14 @@ class OpayWebhookController extends Controller
             }
 
             $user->increment('balance_kobo', $lockedDeposit->amount_kobo);
-            $balanceAfter = $user->fresh()->balance_kobo;
 
-            LedgerEntry::create([
-                'uid'           => $user->id,
-                'type'          => 'deposit',
-                'amount_kobo'   => $lockedDeposit->amount_kobo,
-                'balance_after' => $balanceAfter,
-                'reference'     => $lockedDeposit->reference,
-            ]);
-
-            // Only write a fee ledger entry if a fee was actually charged
-            if ((int) $lockedDeposit->transaction_fee > 0) {
-                LedgerEntry::create([
-                    'uid'           => $user->id,
-                    'type'          => 'transaction_fee',
-                    'amount_kobo'   => $lockedDeposit->transaction_fee,
-                    'balance_after' => $balanceAfter,
-                    'reference'     => $lockedDeposit->reference,
-                ]);
-            }
+            LedgerService::postDeposit(
+                user:       $user->fresh(),
+                amountKobo: (int) $lockedDeposit->amount_kobo,
+                reference:  $lockedDeposit->reference,
+                feeKobo:    (int) $lockedDeposit->transaction_fee,
+                gateway:    'opay',
+            );
 
             $lockedDeposit->update([
                 'status'       => Deposit::STATUS_COMPLETED,
@@ -184,7 +172,7 @@ class OpayWebhookController extends Controller
                 'reference'     => $lockedDeposit->reference,
                 'user_id'       => $user->id,
                 'amount_kobo'   => $lockedDeposit->amount_kobo,
-                'balance_after' => $balanceAfter,
+                'balance_after' => $user->fresh()->balance_kobo,
             ]);
         });
     }

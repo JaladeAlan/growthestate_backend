@@ -277,7 +277,7 @@ class LedgerService
         int    $amountKobo,
         string $reference,
         string $note = '',
-        int    $rewardsBalanceAfter = 0,
+        int    $rewardsBalanceAfter,
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward credit amount_kobo must be positive; got {$amountKobo}.");
@@ -322,7 +322,7 @@ class LedgerService
         int    $amountKobo,
         string $reference,
         string $note = '',
-        int    $rewardsBalanceAfter = 0,
+        int    $rewardsBalanceAfter,
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward spend amount_kobo must be positive; got {$amountKobo}.");
@@ -367,7 +367,7 @@ class LedgerService
         int    $amountKobo,
         string $reference,
         string $note = '',
-        int    $rewardsBalanceAfter = 0,
+        int    $rewardsBalanceAfter,
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward reversal amount_kobo must be positive; got {$amountKobo}.");
@@ -420,6 +420,9 @@ class LedgerService
         }
         if ($feeKobo < 0) {
             throw new RuntimeException("Marketplace trade feeKobo cannot be negative; got {$feeKobo}.");
+        }
+        if ($feeKobo > $totalKobo) {
+            throw new RuntimeException("Marketplace trade feeKobo ({$feeKobo}) exceeds totalKobo ({$totalKobo}); sellerGets would be negative.");
         }
 
         $sellerGets = $totalKobo - $feeKobo;

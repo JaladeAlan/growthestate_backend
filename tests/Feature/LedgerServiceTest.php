@@ -439,15 +439,17 @@ describe('LedgerService::postMarketplaceTrade', function () {
         $buyer  = ledgerUser(5_000_000);
         $seller = ledgerUser(0);
 
+        // feeKobo > totalKobo → sellerGets goes negative. This is guarded
+        // explicitly (sellerGets < 0 would silently debit the seller).
         expect(fn () => DB::transaction(function () use ($buyer, $seller) {
             LedgerService::postMarketplaceTrade(
                 buyer:     $buyer,
                 seller:    $seller,
                 totalKobo: 1_000_000,
-                feeKobo:   2_000_000, // fee > total → sellerGets = -1_000_000 → unbalanced
+                feeKobo:   2_000_000,
                 reference: 'MKT-BAD',
             );
-        }))->toThrow(RuntimeException::class);
+        }))->toThrow(RuntimeException::class, 'exceeds totalKobo');
     });
 
 });
