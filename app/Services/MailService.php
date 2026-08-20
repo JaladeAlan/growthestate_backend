@@ -38,7 +38,7 @@ class MailService
             self::increment($mailer);
         } catch (\Throwable $e) {
             Log::error("Mail failed on {$mailer}", ['error' => $e->getMessage()]);
-            self::tryFallback($mailable, $to, $mailer);
+            self::tryFallback($mailable, $to, [$mailer]);
         }
     }
 
@@ -133,17 +133,23 @@ class MailService
         return 'resend';
     }
 
-    private static function tryFallback($mailable, string $to, string $failed): void
+    /**
+     * @param array<int,string> $tried  Mailers already attempted this send (accumulates
+     *                                  across recursive calls) so a persistently-failing
+     *                                  pair of providers can't bounce back and forth
+     *                                  indefinitely instead of reaching the exhausted state.
+     */
+    private static function tryFallback($mailable, string $to, array $tried): void
     {
         $today     = now()->toDateString();
         $fallbacks = array_filter(
             self::MAILERS,
-            fn($m) => $m !== $failed &&
+            fn($m) => ! in_array($m, $tried, true) &&
                       (int) Cache::get(self::key($m, $today), 0) < self::LIMITS[$m]
         );
 
         if (empty($fallbacks)) {
-            Log::critical('MailService: no fallback available.', ['failed_mailer' => $failed, 'to' => $to]);
+            Log::critical('MailService: no fallback available.', ['tried' => $tried, 'to' => $to]);
             throw new \RuntimeException('All mail providers failed or exhausted.');
         }
 
@@ -155,7 +161,7 @@ class MailService
             Log::info("MailService: fallback to {$fallback} succeeded.");
         } catch (\Throwable $e) {
             Log::error("MailService: fallback {$fallback} also failed.", ['error' => $e->getMessage()]);
-            self::tryFallback($mailable, $to, $fallback);
+            self::tryFallback($mailable, $to, [...$tried, $fallback]);
         }
     }
 

@@ -115,10 +115,18 @@ class RewardsService
     /**
      * Reverse a rewards credit (e.g. reward revoked by admin, fraud detection).
      * Only reverses up to the current rewards balance — will not go negative.
+     *
+     * @return int  Amount actually reversed, in kobo. May be less than
+     *              $amountKobo if the user's rewards balance was already
+     *              lower than the requested reversal (e.g. partially spent
+     *              since the reward was credited) — callers that need the
+     *              full amount clawed back should check this return value.
      */
-    public static function reverseCredit(User $user, int $amountKobo, string $reference, string $note = ''): void
+    public static function reverseCredit(User $user, int $amountKobo, string $reference, string $note = ''): int
     {
-        DB::transaction(function () use ($user, $amountKobo, $reference, $note) {
+        $actualDebit = 0;
+
+        DB::transaction(function () use ($user, $amountKobo, $reference, $note, &$actualDebit) {
             $locked      = User::lockForUpdate()->find($user->id);
             $actualDebit = min($locked->rewards_balance_kobo, $amountKobo);
 
@@ -138,9 +146,19 @@ class RewardsService
                 user:                $locked->fresh(),
                 amountKobo:          $actualDebit,
                 reference:           $reference,
-                note:                $note ?: 'Reward credit reversed',
                 rewardsBalanceAfter: $rewardsAfter,
+                note:                $note ?: 'Reward credit reversed',
             );
+
+            if ($actualDebit < $amountKobo) {
+                Log::warning('RewardsService::reverseCredit — partial reversal only', [
+                    'user_id'         => $locked->id,
+                    'requested_kobo'  => $amountKobo,
+                    'reversed_kobo'   => $actualDebit,
+                    'shortfall_kobo'  => $amountKobo - $actualDebit,
+                    'reference'       => $reference,
+                ]);
+            }
 
             Log::info('Rewards credit reversed', [
                 'user_id'       => $locked->id,
@@ -149,6 +167,8 @@ class RewardsService
                 'note'          => $note,
             ]);
         });
+
+        return $actualDebit;
     }
 
     /**

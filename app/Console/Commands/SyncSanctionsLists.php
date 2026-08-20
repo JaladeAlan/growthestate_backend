@@ -28,9 +28,12 @@ class SyncSanctionsLists extends Command
             ? $this->importers
             : [$source => $this->importers[$source] ?? null];
 
+        $hadFailure = false;
+
         foreach ($importers as $key => $class) {
             if (! $class) {
                 $this->error("Unknown source: {$key}. Valid options: ofac, un, eu, all");
+                $hadFailure = true;
                 continue;
             }
 
@@ -63,11 +66,13 @@ class SyncSanctionsLists extends Command
 
                 $this->error("  {$key} failed: " . $e->getMessage());
                 Log::error("Sanctions sync failed for {$key}", ['error' => $e->getMessage()]);
+                $hadFailure = true;
             }
         }
 
         $total = \App\Models\SanctionsEntry::count();
         $this->info("Total sanctions entries in database: {$total}");
-        return self::SUCCESS;
+
+        return $hadFailure ? self::FAILURE : self::SUCCESS;
     }
 }

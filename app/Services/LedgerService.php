@@ -276,8 +276,8 @@ class LedgerService
         User   $user,
         int    $amountKobo,
         string $reference,
-        string $note = '',
         int    $rewardsBalanceAfter,
+        string $note = '',
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward credit amount_kobo must be positive; got {$amountKobo}.");
@@ -321,8 +321,8 @@ class LedgerService
         User   $user,
         int    $amountKobo,
         string $reference,
-        string $note = '',
         int    $rewardsBalanceAfter,
+        string $note = '',
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward spend amount_kobo must be positive; got {$amountKobo}.");
@@ -366,8 +366,8 @@ class LedgerService
         User   $user,
         int    $amountKobo,
         string $reference,
-        string $note = '',
         int    $rewardsBalanceAfter,
+        string $note = '',
     ): LedgerTransaction {
         if ($amountKobo <= 0) {
             throw new RuntimeException("Reward reversal amount_kobo must be positive; got {$amountKobo}.");

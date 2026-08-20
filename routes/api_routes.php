@@ -37,16 +37,14 @@ use Illuminate\Support\Facades\Queue;
 Route::get('/health', function () {
     $redis = false;
     $queue = null;
-    $redisError = null;
 
     $db = false;
-    $dbError = null;
 
     try {
         \Illuminate\Support\Facades\DB::select('select 1');
         $db = true;
     } catch (\Exception $e) {
-        $dbError = $e->getMessage();
+        \Illuminate\Support\Facades\Log::error('Health check: DB unreachable', ['error' => $e->getMessage()]);
     }
 
     try {
@@ -54,20 +52,15 @@ Route::get('/health', function () {
         $redis = true;
         $queue = Queue::size('default');
     } catch (\Exception $e) {
-        $redisError = $e->getMessage();
+        \Illuminate\Support\Facades\Log::error('Health check: Redis unreachable', ['error' => $e->getMessage()]);
     }
 
     return response()->json([
-        'status'      => ($db && $redis) ? 'ok' : 'degraded',
-        'db'          => $db,
-        'db_error'    => $dbError,
-        'redis'       => $redis,
-        'redis_error' => $redisError,
-        'queue_size'  => $queue,
-        'client_ip'    => request()->ip(),
-        'real_ip'      => request()->header('X-Forwarded-For'),
-        'cache_driver'=> config('cache.default'),
-        'timestamp'   => now(),
+        'status'     => ($db && $redis) ? 'ok' : 'degraded',
+        'db'         => $db,
+        'redis'      => $redis,
+        'queue_size' => $queue,
+        'timestamp'  => now(),
     ], ($db && $redis) ? 200 : 503);
 });
 
@@ -149,8 +142,8 @@ Route::middleware(['jwt.custom'])->group(function () {
             ->middleware(['check.pin', 'audit.log']);
 
         // ── Transaction PIN ───────────────────────────────────────────────────
-        Route::post('/pin/set',    [PinController::class, 'set']);
-        Route::post('/pin/update', [PinController::class, 'update']);
+        Route::post('/pin/set',    [PinController::class, 'set'])->middleware('throttle:5,15');
+        Route::post('/pin/update', [PinController::class, 'update'])->middleware('throttle:5,15');
 
         Route::post('/pin/forgot',      [PinController::class, 'forgot'])->middleware('throttle:5,15');
         Route::post('/pin/verify-code', [PinController::class, 'verifyCode'])->middleware('throttle:5,15');
@@ -179,9 +172,9 @@ Route::middleware(['jwt.custom'])->group(function () {
         Route::get('/transactions/user',      [TransactionController::class, 'userTransactions']);
         Route::get('/lands/{land}/purchase/preview', [PurchaseController::class, 'preview']);
         Route::post('/lands/{land}/purchase', [PurchaseController::class, 'purchase'])
-            ->middleware(['screening.transact', 'suspended', 'check.pin', 'audit.log']);
+            ->middleware(['idempotent', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
         Route::post('/lands/{land}/sell',     [PurchaseController::class, 'sellUnits'])
-            ->middleware(['screening.transact', 'suspended', 'check.pin', 'audit.log']);
+            ->middleware(['idempotent', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
 
         // ── Portfolio ─────────────────────────────────────────────────────────
         Route::get('/portfolio/summary',     [PortfolioController::class, 'summary']);
@@ -237,7 +230,7 @@ Route::middleware(['jwt.custom'])->group(function () {
         Route::post('/marketplace/{listing}/offers', [MarketplaceController::class, 'makeOffer'])
             ->middleware(['throttle:10,60', 'screening.transact', 'suspended']);
         Route::patch('/marketplace/{listing}/offers/{offer}/accept',   [MarketplaceController::class, 'acceptOffer'])
-            ->middleware(['throttle:5,1', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
+            ->middleware(['idempotent', 'throttle:5,1', 'screening.transact', 'suspended', 'check.pin', 'audit.log']);
         Route::patch('/marketplace/{listing}/offers/{offer}/reject',   [MarketplaceController::class, 'rejectOffer']);
         Route::patch('/marketplace/{listing}/offers/{offer}/withdraw', [MarketplaceController::class, 'withdrawOffer']);
         Route::get('/marketplace/{listing}/messages',  [MarketplaceController::class, 'messages']);

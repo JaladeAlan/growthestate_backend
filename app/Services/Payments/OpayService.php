@@ -60,7 +60,7 @@ class OpayService
             ? config('services.opay.secret_key')   
             : config('services.opay.public_key');  
 
-        Log::info('OPay API request', ['url' => $url, 'body' => $body]);
+        Log::info('OPay API request', ['url' => $url]);
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -85,7 +85,7 @@ class OpayService
             throw new \RuntimeException("OPay network error: {$curlError}");
         }
 
-        Log::info('OPay API response', ['status' => $httpStatus, 'body' => $responseBody]);
+        Log::info('OPay API response', ['status' => $httpStatus]);
 
         $decoded = json_decode($responseBody, true);
 
@@ -100,7 +100,7 @@ class OpayService
         return $decoded;
     }
     /**
-     * Formula: HMAC_SHA512(timestamp + rawBody, secretKey)
+     * Formula: HMAC_SHA3-512(authJson, secretKey)
      */
    public static function verifyWebhookSignature(string $rawBody): bool
     {

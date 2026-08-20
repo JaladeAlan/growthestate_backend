@@ -2,22 +2,35 @@
 
 namespace App\Services\Payments;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class MonnifyService
 {
-    protected static function authToken()
+    // Monnify access tokens are valid for 1 hour; cache with a safety
+    // margin so we never hand out a token that expires mid-request.
+    private const TOKEN_TTL_SECONDS = 3000; // 50 minutes
+
+    protected static function authToken(): string
     {
-        $credentials = base64_encode(
-            config('services.monnify.api_key') . ':' .
-            config('services.monnify.secret_key')
-        );
+        return Cache::remember('monnify_access_token', self::TOKEN_TTL_SECONDS, function () {
+            $credentials = base64_encode(
+                config('services.monnify.api_key') . ':' .
+                config('services.monnify.secret_key')
+            );
 
-        $response = Http::withHeaders([
-            'Authorization' => "Basic {$credentials}",
-        ])->post(config('services.monnify.base_url') . '/api/v1/auth/login');
+            $response = Http::withHeaders([
+                'Authorization' => "Basic {$credentials}",
+            ])->post(config('services.monnify.base_url') . '/api/v1/auth/login');
 
-        return $response['responseBody']['accessToken'] ?? null;
+            $token = $response['responseBody']['accessToken'] ?? null;
+
+            if (! $response->successful() || ! $token) {
+                throw new \RuntimeException('Monnify auth failed: ' . $response->body());
+            }
+
+            return $token;
+        });
     }
 
     public static function initialize(

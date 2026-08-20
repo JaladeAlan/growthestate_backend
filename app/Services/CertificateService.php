@@ -98,10 +98,11 @@ class CertificateService
             $cert->owner_name
         );
 
-        // Signature must always check out regardless of status — an
-        // invalid signature means the cert_number/data don't match what
-        // was actually issued, which is worth surfacing distinctly from
-        // "not found".
+        // A mismatched signature means the cert_number/data don't match what
+        // was actually issued. The controller currently returns the same
+        // "not found" response for this as for a missing token, but we still
+        // fail closed here rather than return a certificate whose signature
+        // doesn't check out.
         return hash_equals($expected, $cert->digital_signature) ? $cert : null;
     }
 

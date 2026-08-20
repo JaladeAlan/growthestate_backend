@@ -201,14 +201,6 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         return $this->hasMany(ReferralReward::class);
     }
 
-    /**
-     * Total spendable balance = main wallet + rewards wallet.
-     */
-    public function getTotalSpendableKoboAttribute(): int
-    {
-        return $this->balance_kobo + $this->rewards_balance_kobo;
-    }
-
     /*
     |--------------------------------------------------------------------------
     | Computed Attributes
