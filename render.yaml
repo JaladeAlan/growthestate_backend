@@ -1,5 +1,14 @@
 services:
   # ── Web Service (Laravel App) ─────────────────────────────
+  # NOTE: this file is not currently synced as an active Render Blueprint
+  # for the deployed project — the real service is named "sprout" and its
+  # env vars are managed directly in the Render dashboard. Kept here for
+  # reference / in case a Blueprint sync is set up later.
+  #
+  # The queue worker (ScreenUserJob, GenerateDailyPortfolioSnapshot, etc.)
+  # runs inline in this same container via supervisord.render.conf —
+  # see the [program:laravel-worker] block there. No separate worker
+  # service is provisioned.
   - type: web
     name: sproutvest-app
     runtime: docker
@@ -12,25 +21,7 @@ services:
         value: production
       - key: APP_DEBUG
         value: false
-      - key: QUEUE_CONNECTION
-        value: redis
-
-  # ── Queue Worker (separate service) ───────────────────────
-  - type: worker
-    name: sproutvest-queue
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: starter
-    startCommand: >
-      php artisan queue:work redis
-      --sleep=3
-      --tries=3
-      --timeout=120
-      --memory=128
-      --max-jobs=100
-    envVars:
-      - key: APP_ENV
-        value: production
+      - key: APP_NAME
+        value: SproutVest
       - key: QUEUE_CONNECTION
         value: redis

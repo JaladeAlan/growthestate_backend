@@ -37,7 +37,6 @@ use Illuminate\Support\Facades\Queue;
 Route::get('/health', function () {
     $redis = false;
     $queue = null;
-    $redisPrefix = null;
 
     $db = false;
 
@@ -52,21 +51,16 @@ Route::get('/health', function () {
         \Illuminate\Support\Facades\Redis::ping();
         $redis = true;
         $queue = Queue::size('default');
-        // TEMP debug: confirm this matches the prefix logged by ScreenUserJob
-        // on the worker service (see storage/logs or Render Logs tab). Remove
-        // once the web/worker Redis-prefix mismatch is confirmed and fixed.
-        $redisPrefix = config('database.redis.options.prefix');
     } catch (\Exception $e) {
         \Illuminate\Support\Facades\Log::error('Health check: Redis unreachable', ['error' => $e->getMessage()]);
     }
 
     return response()->json([
-        'status'       => ($db && $redis) ? 'ok' : 'degraded',
-        'db'           => $db,
-        'redis'        => $redis,
-        'queue_size'   => $queue,
-        'redis_prefix' => $redisPrefix, // TEMP — remove after debugging
-        'timestamp'    => now(),
+        'status'     => ($db && $redis) ? 'ok' : 'degraded',
+        'db'         => $db,
+        'redis'      => $redis,
+        'queue_size' => $queue,
+        'timestamp'  => now(),
     ], ($db && $redis) ? 200 : 503);
 });
 
