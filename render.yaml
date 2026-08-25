@@ -12,6 +12,8 @@ services:
         value: production
       - key: APP_DEBUG
         value: false
+      - key: QUEUE_CONNECTION
+        value: redis
 
   # ── Queue Worker (separate service) ───────────────────────
   - type: worker
@@ -30,3 +32,5 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: QUEUE_CONNECTION
+        value: redis
