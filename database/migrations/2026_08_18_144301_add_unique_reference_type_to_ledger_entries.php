@@ -28,7 +28,7 @@ return new class extends Migration
         $duplicates = DB::table('ledger_entries')
             ->select('reference', 'type', DB::raw('COUNT(*) as cnt'))
             ->groupBy('reference', 'type')
-            ->having('cnt', '>', 1)
+            ->havingRaw('COUNT(*) > 1')
             ->get();
 
         if ($duplicates->isNotEmpty()) {
