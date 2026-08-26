@@ -9,8 +9,10 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\Transport\MailtrapTransport;
 use App\Services\GeoService;
 use App\Models\LandPriceHistory;
+use App\Models\Faq;
 use App\Models\User;
 use App\Observers\LandPriceHistoryObserver;
+use App\Observers\FaqObserver;
 use App\Providers\JwtUserProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -31,6 +33,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         LandPriceHistory::observe(LandPriceHistoryObserver::class);
+        Faq::observe(FaqObserver::class);
 
         Auth::provider('jwt-eloquent', function ($app, array $config) {
             return new JwtUserProvider(
