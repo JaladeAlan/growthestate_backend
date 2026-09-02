@@ -33,19 +33,11 @@ class LandSeeder extends Seeder
         'Luxury estate development in prime location with guaranteed returns.',
     ];
 
-    // Placeholder images for land/real estate
-    private array $placeholderImages = [
-        'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1513584684374-8bab748fbf90?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1448630360428-65456885c650?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1518780664697-55e3ad937233?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1582407947304-fd86f028f716?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1605146769289-440113cc3d00?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=800&h=600&fit=crop',
-        'https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=800&h=600&fit=crop',
-    ];
+    // Local land photos are read from database/seeders/images/lands and
+    // uploaded to the r2 disk under 'seed/lands/' (see copySeederImagesToR2()).
+    // Drop real .jpg/.png/.webp files in that folder before seeding — if
+    // it's empty, land records are seeded with no images rather than
+    // falling back to external placeholder URLs.
 
     public function run(): void
     {
@@ -53,20 +45,17 @@ class LandSeeder extends Seeder
         $this->command->info('Land data already seeded. Skipping.');
         return;
         }
-        // Copy images from database/seeders/images/lands to storage/app/public/seed/lands
-        $this->copySeederImagesToStorage();
-
-        // Get all seed images from storage
-        $images = collect(Storage::files('public/seed/lands'))
-            ->map(fn($path) => str_replace('public/', '', $path))
-            ->values();
-
+        // Upload real land photos (database/seeders/images/lands) to R2
+        $images = $this->uploadSeederImagesToR2();
         $useLocalImages = $images->isNotEmpty();
 
         if ($useLocalImages) {
-            $this->command->info("Found {$images->count()} local seed images");
+            $this->command->info("Uploaded {$images->count()} seed images to R2");
         } else {
-            $this->command->warn('No local seed images found. Using placeholder URLs.');
+            $this->command->warn(
+                'No local seed images found in database/seeders/images/lands — ' .
+                'land records will be seeded without images.'
+            );
         }
 
         for ($i = 1; $i <= 10; $i++) {
@@ -118,26 +107,14 @@ class LandSeeder extends Seeder
                     'price_date' => now()->toDateString(),
                 ]);
 
-                // Attach images (local or placeholder)
+                // Attach local seed images, if any were uploaded to R2
                 if ($useLocalImages) {
-                    // Use local images
                     $imageCount = min(3, $images->count());
                     $selectedImages = $images->random($imageCount);
 
                     foreach ($selectedImages as $img) {
                         $land->images()->create([
                             'image_path' => $img
-                        ]);
-                    }
-                } else {
-                    // Use placeholder URLs
-                    $imageCount = 3;
-                    $startIndex = ($i - 1) * 3;
-                    
-                    for ($j = 0; $j < $imageCount; $j++) {
-                        $placeholderIndex = ($startIndex + $j) % count($this->placeholderImages);
-                        $land->images()->create([
-                            'image_path' => $this->placeholderImages[$placeholderIndex]
                         ]);
                     }
                 }
@@ -170,46 +147,53 @@ class LandSeeder extends Seeder
     }
 
     /**
-     * Copy images from database/seeders/images/lands to storage/app/public/seed/lands
+     * Upload images from database/seeders/images/lands directly to the r2
+     * disk (under seed/lands/), so LandImage::getImageUrlAttribute() — which
+     * resolves any non-URL image_path against the r2 disk — produces working
+     * URLs. Returns the R2 paths that were successfully uploaded.
      */
-    private function copySeederImagesToStorage(): void
+    private function uploadSeederImagesToR2()
     {
         $sourceDir = database_path('seeders/images/lands');
-        $targetDir = storage_path('app/public/seed/lands');
 
         if (!File::exists($sourceDir) || !File::isDirectory($sourceDir)) {
-            $this->command->info("Source directory not found: {$sourceDir} - will use placeholder URLs");
-            return;
+            $this->command->info("Source directory not found: {$sourceDir}");
+            return collect();
         }
 
-        // Ensure target directory exists
-        if (!File::exists($targetDir)) {
-            File::makeDirectory($targetDir, 0775, true);
-            $this->command->info("Created target directory: {$targetDir}");
-        }
-
-        // Get all image files from source
         $sourceFiles = File::files($sourceDir);
-        
+
         if (empty($sourceFiles)) {
-            $this->command->info("No images found in: {$sourceDir} - will use placeholder URLs");
-            return;
+            $this->command->info("No images found in: {$sourceDir}");
+            return collect();
         }
 
-        $copiedCount = 0;
+        $uploaded = collect();
+
         foreach ($sourceFiles as $file) {
-            // Only copy image files
             $extension = strtolower($file->getExtension());
-            if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
-                $targetPath = $targetDir . '/' . $file->getFilename();
-                
-                // Copy file (overwrite if exists to ensure fresh copies)
-                File::copy($file->getPathname(), $targetPath);
-                $copiedCount++;
+            if (!in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {
+                continue;
+            }
+
+            $r2Path = 'seed/lands/' . $file->getFilename();
+
+            try {
+                Storage::disk('r2')->put(
+                    $r2Path,
+                    File::get($file->getPathname()),
+                    'public'
+                );
+                $uploaded->push($r2Path);
+            } catch (\Throwable $e) {
+                $this->command->error(
+                    "Failed to upload {$file->getFilename()} to R2 — check AWS_* / R2 " .
+                    "credentials in .env. Error: {$e->getMessage()}"
+                );
             }
         }
 
-        $this->command->info("Copied {$copiedCount} images from database/seeders/images/lands to storage");
+        return $uploaded;
     }
 
     // Helper methods to replace Faker
