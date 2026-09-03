@@ -18,9 +18,17 @@ return Application::configure(basePath: dirname(__DIR__))
         // the app), so IP-keyed rate limits (e.g. throttle:5,60 on
         // /register) end up shared across all users behind it instead
         // of being per-client.
+        // NOTE: config() is not yet available this early in the
+        // bootstrap lifecycle (this closure runs before config files
+        // are loaded), so this reads the env vars directly rather than
+        // via config('trustedproxy.*').
         $middleware->trustProxies(
-            at: config('trustedproxy.proxies'),
-            headers: config('trustedproxy.headers'),
+            at: env('TRUSTED_PROXIES', '*'),
+            headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR |
+                     \Illuminate\Http\Request::HEADER_X_FORWARDED_HOST |
+                     \Illuminate\Http\Request::HEADER_X_FORWARDED_PORT |
+                     \Illuminate\Http\Request::HEADER_X_FORWARDED_PROTO |
+                     \Illuminate\Http\Request::HEADER_X_FORWARDED_AWS_ELB,
         );
 
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
