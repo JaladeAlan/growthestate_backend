@@ -40,6 +40,29 @@ class ProfileController extends Controller
         $user->is_kyc_verified  = $this->isKycVerified($request->user());
         $user->kyc_status       = $this->resolveKycStatus($request->user());
 
+        // Staff-only: expose effective permissions so the admin UI can show
+        // only the sections this account actually has backend access to.
+        // is_admin is a full bypass (see User::hasPermission()), so it's
+        // represented here as having every permission that currently exists.
+        $authUser = $request->user();
+
+        if ($authUser->is_admin || $authUser->roles()->exists()) {
+            $user->permissions = $authUser->is_admin
+                ? \App\Models\Permission::pluck('name')
+                : $authUser->roles()
+                    ->with('permissions:id,name')
+                    ->get()
+                    ->pluck('permissions')
+                    ->flatten()
+                    ->pluck('name')
+                    ->unique()
+                    ->values();
+
+            $user->role_names = $authUser->is_admin
+                ? ['super_admin']
+                : $authUser->roles()->pluck('name');
+        }
+
         return response()->json([
             'success'    => true,
             'data'       => $user,

@@ -267,17 +267,17 @@ Route::middleware(['jwt.custom', 'admin', 'throttle:60,1', 'audit.log'])->prefix
     Route::delete('/users/{user}/roles/{role}',[AdminRoleController::class, 'revokeRole'])->middleware('permission:roles.manage');
 
     // ── Lands ─────────────────────────────────────────────────────────────────
-    Route::get('/lands',                       [LandController::class, 'adminIndex']);
-    Route::get('/lands/{land}',                [LandController::class, 'adminShow']);
-    Route::post('/lands',                      [LandController::class, 'store']);
-    Route::post('/lands/{land}',               [LandController::class, 'update']);
-    Route::patch('/lands/{land}/price',        [LandController::class, 'updatePrice']);
-    Route::patch('/lands/{land}/availability', [LandController::class, 'toggleAvailability']);
+    Route::get('/lands',                       [LandController::class, 'adminIndex'])->middleware('permission:lands.manage');
+    Route::get('/lands/{land}',                [LandController::class, 'adminShow'])->middleware('permission:lands.manage');
+    Route::post('/lands',                      [LandController::class, 'store'])->middleware('permission:lands.manage');
+    Route::post('/lands/{land}',               [LandController::class, 'update'])->middleware('permission:lands.manage');
+    Route::patch('/lands/{land}/price',        [LandController::class, 'updatePrice'])->middleware('permission:lands.manage');
+    Route::patch('/lands/{land}/availability', [LandController::class, 'toggleAvailability'])->middleware('permission:lands.manage');
 
-    Route::get('/lands/{land}/valuation',                   [LandController::class, 'getValuations']);
-    Route::post('/lands/{land}/valuation',                  [LandController::class, 'addValuationEntry']);
-    Route::patch('/lands/{land}/valuation/{year}/{month}',  [LandController::class, 'updateValuationEntry']);
-    Route::delete('/lands/{land}/valuation/{year}/{month}', [LandController::class, 'deleteValuationEntry']);
+    Route::get('/lands/{land}/valuation',                   [LandController::class, 'getValuations'])->middleware('permission:lands.manage');
+    Route::post('/lands/{land}/valuation',                  [LandController::class, 'addValuationEntry'])->middleware('permission:lands.manage');
+    Route::patch('/lands/{land}/valuation/{year}/{month}',  [LandController::class, 'updateValuationEntry'])->middleware('permission:lands.manage');
+    Route::delete('/lands/{land}/valuation/{year}/{month}', [LandController::class, 'deleteValuationEntry'])->middleware('permission:lands.manage');
 
     // ── KYC ───────────────────────────────────────────────────────────────────
     Route::get('/kyc',                   [KycController::class, 'adminIndex'])->middleware('permission:kyc.view');
@@ -297,15 +297,15 @@ Route::middleware(['jwt.custom', 'admin', 'throttle:60,1', 'audit.log'])->prefix
     });
 
     // ── Support ───────────────────────────────────────────────────────────────
-    Route::get('/support/tickets',                      [AdminSupportController::class, 'index']);
-    Route::get('/support/tickets/{ticket}',             [AdminSupportController::class, 'show']);
-    Route::post('/support/tickets/{ticket}/reply',      [AdminSupportController::class, 'reply']);
-    Route::patch('/support/tickets/{ticket}/status',    [AdminSupportController::class, 'updateStatus']);
-    Route::delete('/support/tickets/{ticket}',          [AdminSupportController::class, 'destroy']);
-    Route::get('/support/stats',                        [SupportController::class, 'adminStats']);
+    Route::get('/support/tickets',                      [AdminSupportController::class, 'index'])->middleware('permission:support.tickets.view');
+    Route::get('/support/tickets/{ticket}',             [AdminSupportController::class, 'show'])->middleware('permission:support.tickets.view');
+    Route::post('/support/tickets/{ticket}/reply',      [AdminSupportController::class, 'reply'])->middleware('permission:support.tickets.manage');
+    Route::patch('/support/tickets/{ticket}/status',    [AdminSupportController::class, 'updateStatus'])->middleware('permission:support.tickets.manage');
+    Route::delete('/support/tickets/{ticket}',          [AdminSupportController::class, 'destroy'])->middleware('permission:support.tickets.manage');
+    Route::get('/support/stats',                        [SupportController::class, 'adminStats'])->middleware('permission:support.tickets.view');
 
     // ── Live chat (agent) ─────────────────────────────────────────────────────
-    Route::prefix('live-chat')->group(function () {
+    Route::prefix('live-chat')->middleware('permission:live_chat.manage')->group(function () {
         Route::get('/queue',             [LiveChatController::class, 'agentQueue']);
         Route::post('/{ticket}/claim',   [LiveChatController::class, 'agentClaim']);
         Route::post('/{ticket}/message', [LiveChatController::class, 'agentMessage']);
@@ -314,7 +314,7 @@ Route::middleware(['jwt.custom', 'admin', 'throttle:60,1', 'audit.log'])->prefix
     });
 
     // ── Blog ──────────────────────────────────────────────────────────────────
-    Route::prefix('blog')->group(function () {
+    Route::prefix('blog')->middleware('permission:blog.manage')->group(function () {
         Route::get('/categories', [BlogController::class, 'adminCategories']);
         Route::get('/tags',       [BlogController::class, 'adminTags']);
 
@@ -347,17 +347,17 @@ Route::middleware(['jwt.custom', 'admin', 'throttle:60,1', 'audit.log'])->prefix
     });
 
     // ── Referrals ─────────────────────────────────────────────────────────────
-    Route::get('/referrals',       [ReferralController::class, 'adminIndex']);
-    Route::get('/referrals/stats', [ReferralController::class, 'adminStats']);
+    Route::get('/referrals',       [ReferralController::class, 'adminIndex'])->middleware('permission:referrals.view');
+    Route::get('/referrals/stats', [ReferralController::class, 'adminStats'])->middleware('permission:referrals.view');
 
     // ── Certificates ──────────────────────────────────────────────────────────
-    Route::get('/certificates',                          [CertificateController::class, 'adminIndex']);
-    Route::patch('/certificates/{certificate}/revoke',   [CertificateController::class, 'revoke']);
-    Route::post('/certificates/{certificate}/regenerate',[CertificateController::class, 'regenerate']);
+    Route::get('/certificates',                          [CertificateController::class, 'adminIndex'])->middleware('permission:certificates.view');
+    Route::patch('/certificates/{certificate}/revoke',   [CertificateController::class, 'revoke'])->middleware('permission:certificates.manage');
+    Route::post('/certificates/{certificate}/regenerate',[CertificateController::class, 'regenerate'])->middleware('permission:certificates.manage');
 
     // ── Waitlist ──────────────────────────────────────────────────────────────
-    Route::get('/waitlist',                    [WaitlistController::class, 'index']);
-    Route::get('/waitlist/stats',              [WaitlistController::class, 'stats']);
-    Route::post('/waitlist/{waitlist}/invite', [WaitlistController::class, 'invite']);
-    Route::delete('/waitlist/{waitlist}',      [WaitlistController::class, 'destroy']);
+    Route::get('/waitlist',                    [WaitlistController::class, 'index'])->middleware('permission:waitlist.view');
+    Route::get('/waitlist/stats',              [WaitlistController::class, 'stats'])->middleware('permission:waitlist.view');
+    Route::post('/waitlist/{waitlist}/invite', [WaitlistController::class, 'invite'])->middleware('permission:waitlist.manage');
+    Route::delete('/waitlist/{waitlist}',      [WaitlistController::class, 'destroy'])->middleware('permission:waitlist.manage');
 });
