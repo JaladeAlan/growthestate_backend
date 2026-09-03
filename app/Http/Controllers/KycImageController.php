@@ -44,7 +44,7 @@ class KycImageController extends Controller
             return response()->json(['message' => 'KYC record not found.'], 404);
         }
 
-        if ($kyc->user_id !== $user->id && ! $user->is_admin) {
+        if ($kyc->user_id !== $user->id && ! $user->hasPermission('kyc.view')) {
             // Return 404 instead of 403 to avoid confirming the record exists
             return response()->json(['message' => 'KYC record not found.'], 404);
         }

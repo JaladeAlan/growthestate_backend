@@ -240,6 +240,10 @@ class ReferralController extends Controller
 
     private function authorizeAdmin(): void
     {
-        abort_unless(auth()->user()?->is_admin, 403);
+        // Route middleware already enforces permission:referrals.view — this
+        // is defence-in-depth in case the method is ever called elsewhere.
+        // Was previously is_admin-only, which silently blocked any RBAC role
+        // (e.g. operations_manager) holding referrals.view but not is_admin.
+        abort_unless(auth()->user()?->hasPermission('referrals.view'), 403);
     }
 }

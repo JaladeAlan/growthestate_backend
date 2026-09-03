@@ -183,7 +183,7 @@ class KycController extends Controller
         $kyc  = KycVerification::findOrFail($id);
         $user = auth()->user();
 
-        if ($user->id !== $kyc->user_id && ! $user->is_admin) {
+        if ($user->id !== $kyc->user_id && ! $user->hasPermission('kyc.view')) {
             abort(403);
         }
 

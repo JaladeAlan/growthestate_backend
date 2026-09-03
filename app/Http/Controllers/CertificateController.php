@@ -128,8 +128,9 @@ class CertificateController extends Controller
             'revoked_at' => now(),
         ]);
 
-        // Bust the public verify cache so the next QR scan reflects immediately
-        Cache::forget("cert_verify_{$certificate->cert_number}");
+        // Bust the public verify cache so the next QR scan reflects immediately.
+        // Keyed by verify_token, not cert_number — that's what verify() caches under.
+        Cache::forget("cert_verify_{$certificate->verify_token}");
 
         Log::info('Certificate revoked by admin', ['cert_id' => $certificate->id]);
 
@@ -140,7 +141,7 @@ class CertificateController extends Controller
     {
         $path = $this->service->regeneratePdf($certificate);
 
-        Cache::forget("cert_verify_{$certificate->cert_number}");
+        Cache::forget("cert_verify_{$certificate->verify_token}");
 
         return response()->json(['success' => true, 'path' => $path]);
     }
