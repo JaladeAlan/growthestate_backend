@@ -302,4 +302,22 @@ class GenerateDailyPortfolioSnapshot implements ShouldQueue
             ->where('snapshot_date', $date)
             ->exists();
     }
+
+    /**
+     * All $tries exhausted. Unlike ScreenUserJob this isn't a compliance
+     * risk, but a silently missing day of portfolio snapshots would only
+     * ever surface as a user-visible gap in their returns chart, discovered
+     * whenever someone happens to notice — alert the same channel used
+     * elsewhere for unattended failures instead.
+     */
+    public function failed(\Throwable $exception): void
+    {
+        Log::channel('telegram')->warning(
+            '⚠️ GenerateDailyPortfolioSnapshot failed permanently',
+            [
+                'dates' => $this->dates,
+                'error' => $exception->getMessage(),
+            ]
+        );
+    }
 }

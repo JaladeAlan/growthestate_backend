@@ -73,10 +73,11 @@ class KycImageController extends Controller
             },
             200,
             [
-                'Content-Type'        => $mimeType,
-                'Content-Disposition' => 'inline',
-                'Cache-Control'       => 'no-store, no-cache, must-revalidate',
-                'Pragma'              => 'no-cache',
+                'Content-Type'           => $mimeType,
+                'Content-Disposition'    => 'inline',
+                'Cache-Control'          => 'no-store, no-cache, must-revalidate',
+                'Pragma'                 => 'no-cache',
+                'X-Content-Type-Options' => 'nosniff',
             ]
         );
     }

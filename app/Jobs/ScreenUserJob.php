@@ -6,6 +6,8 @@ use App\Models\User;
 use App\Services\SanctionsScreeningService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ScreenUserJob implements ShouldQueue
 {
@@ -25,5 +27,24 @@ class ScreenUserJob implements ShouldQueue
     {
         $service->screen($this->user, $this->trigger);
     }
-}
 
+    /**
+     * All $tries exhausted (or a non-transient exception hit maxExceptions).
+     * A silently-failed screening job means this user never got screened
+     * and nothing else would notice — alert the same channel used for
+     * PEP self-declarations so this gets manual follow-up instead of
+     * quietly sitting in `failed_jobs`.
+     */
+    public function failed(Throwable $exception): void
+    {
+        Log::channel('telegram')->warning(
+            '⚠️ ScreenUserJob failed permanently — user is unscreened',
+            [
+                'user_id' => $this->user->id,
+                'email'   => $this->user->email,
+                'trigger' => $this->trigger,
+                'error'   => $exception->getMessage(),
+            ]
+        );
+    }
+}
