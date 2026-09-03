@@ -125,6 +125,17 @@ class KycController extends Controller
                 );
             });
 
+            Log::channel('telegram')->warning(
+                '📝 KYC Submitted',
+                [
+                    'user_id'  => $user->id,
+                    'name'     => $user->name,
+                    'id_type'  => $data['id_type'],
+                    'country'  => $data['country'] ?? 'Nigeria',
+                    'is_pep'   => $data['is_pep'] ? 'yes' : 'no',
+                ]
+            );
+
             if ($data['is_pep']) {
                 $user->update(['screening_status' => 'flagged']);
 
