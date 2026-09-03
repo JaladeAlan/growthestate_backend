@@ -12,6 +12,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // Must be registered for config/trustedproxy.php to have any
+        // effect — without this, $request->ip() returns the load
+        // balancer's own IP for every request (Render sits in front of
+        // the app), so IP-keyed rate limits (e.g. throttle:5,60 on
+        // /register) end up shared across all users behind it instead
+        // of being per-client.
+        $middleware->trustProxies(
+            at: config('trustedproxy.proxies'),
+            headers: config('trustedproxy.headers'),
+        );
+
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
 
         // Enables Sanctum's stateful-SPA session + CSRF plumbing on the
