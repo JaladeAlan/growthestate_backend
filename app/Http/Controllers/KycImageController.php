@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\KycVerification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 
@@ -47,6 +48,26 @@ class KycImageController extends Controller
         if ($kyc->user_id !== $user->id && ! $user->hasPermission('kyc.view')) {
             // Return 404 instead of 403 to avoid confirming the record exists
             return response()->json(['message' => 'KYC record not found.'], 404);
+        }
+
+        // ── Access log ────────────────────────────────────────────────────────
+        // This is a GET route, so it's outside LogSensitiveRequests (which only
+        // covers mutating verbs). A staff member opening someone's ID/selfie is
+        // exactly the kind of access a KYC system needs a trail for — who
+        // looked at which user's document, and when — independent of the
+        // per-user rate limit above, which only throttles volume and records
+        // nothing about who was viewed. Only logged for staff viewing someone
+        // else's record; a user viewing their own upload isn't a "who accessed
+        // whose data" event worth the same trail.
+        if ($kyc->user_id !== $user->id) {
+            Log::channel('audit')->info('kyc_image_accessed', [
+                'viewer_id'  => $user->id,
+                'subject_id' => $kyc->user_id,
+                'kyc_id'     => $kyc->id,
+                'image_type' => $imageType,
+                'ip'         => $request->ip(),
+                'timestamp'  => now()->toIso8601String(),
+            ]);
         }
 
         // ── Resolve the file path ────────────────────────────────────────────

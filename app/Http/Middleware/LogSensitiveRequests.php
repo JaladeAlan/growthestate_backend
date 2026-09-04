@@ -15,8 +15,10 @@ use Illuminate\Support\Facades\Log;
  * even on endpoints that don't call AdminActionLog::record().
  *
  * Only fires for mutating verbs (POST/PUT/PATCH/DELETE) — GET/HEAD requests
- * are not logged here to keep volume down; read access on sensitive data
- * (e.g. KYC images) already has its own rate-limited logging.
+ * are not logged here to keep volume down. Read access on sensitive data
+ * (e.g. KYC images) is logged separately, at the point of access, by the
+ * controller that serves it — see KycImageController::show()'s
+ * 'kyc_image_accessed' audit log entry.
  *
  * Request/response bodies are intentionally NOT logged — these routes carry
  * bank details, PINs, and KYC data, and body logging is a common source of

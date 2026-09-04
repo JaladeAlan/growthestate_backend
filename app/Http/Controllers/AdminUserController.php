@@ -74,12 +74,24 @@ class AdminUserController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // SHOW  GET /admin/users/{user}
     // ─────────────────────────────────────────────────────────────────────────
-    public function show(User $user)
+    public function show(Request $request, User $user)
     {
         $user->load([
             'kycVerification',
             'userLands.land:id,name,price_per_unit',
             'recentTransactions', 
+        ]);
+
+        // GET request — outside LogSensitiveRequests's mutating-verbs-only
+        // coverage. This endpoint returns a user's full profile (PII, KYC
+        // metadata, transaction history), so who looked at whose record
+        // needs its own trail. See KycImageController::show() for the
+        // precedent this follows.
+        Log::channel('audit')->info('user_profile_accessed', [
+            'viewer_id'  => $request->user()->id,
+            'subject_id' => $user->id,
+            'ip'         => $request->ip(),
+            'timestamp'  => now()->toIso8601String(),
         ]);
 
         return response()->json([

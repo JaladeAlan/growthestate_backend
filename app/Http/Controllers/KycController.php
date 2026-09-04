@@ -233,9 +233,23 @@ class KycController extends Controller
         return response()->json(['success' => true, 'data' => $kycs]);
     }
 
-    public function adminShow($id)
+    public function adminShow(Request $request, $id)
     {
         $kyc  = KycVerification::with('user:id,name,email')->findOrFail($id);
+
+        // GET request — outside LogSensitiveRequests's mutating-verbs-only
+        // coverage. This is the metadata sibling of KycImageController's
+        // image bytes (ID numbers, DOB, address, PEP status) — same
+        // 'kyc_image_accessed'-style trail, distinct event name since no
+        // image_type applies here.
+        Log::channel('audit')->info('kyc_record_accessed', [
+            'viewer_id'  => $request->user()->id,
+            'subject_id' => $kyc->user_id,
+            'kyc_id'     => $kyc->id,
+            'ip'         => $request->ip(),
+            'timestamp'  => now()->toIso8601String(),
+        ]);
+
         $data = $kyc->toArray();
 
         $base = url("/api/kyc/{$kyc->id}/image");

@@ -13,6 +13,7 @@ use App\Models\UserScreening;
 use App\Models\SanctionsEntry;
 use App\Services\SanctionsScreeningService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 
 class ComplianceController extends Controller
@@ -36,8 +37,20 @@ class ComplianceController extends Controller
      * GET /api/admin/compliance/screenings/{screening}
      * View a single screening with full match details.
      */
-    public function show(UserScreening $screening)
+    public function show(Request $request, UserScreening $screening)
     {
+        // GET request — outside LogSensitiveRequests's mutating-verbs-only
+        // coverage. Screening details include PEP/sanctions match reasoning
+        // tied to a specific user, so access needs its own trail. See
+        // KycImageController::show() for the precedent this follows.
+        Log::channel('audit')->info('compliance_screening_accessed', [
+            'viewer_id'   => $request->user()->id,
+            'subject_id'  => $screening->user_id,
+            'screening_id'=> $screening->id,
+            'ip'          => $request->ip(),
+            'timestamp'   => now()->toIso8601String(),
+        ]);
+
         return response()->json([
             'success' => true,
             'data'    => $screening->load('user'),
